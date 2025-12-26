@@ -9,9 +9,9 @@ Add this to your project's `.mcp.json`:
 ```json
 {
   "mcpServers": {
-    "branch-monkey": {
+    "branch-monkey-cloud": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/gneyal/branch-monkey-mcp.git", "branch-monkey-mcp"],
+      "args": ["--from", "git+https://github.com/gneyal/p_69_branch_monkey_mcp.git", "branch-monkey-mcp"],
       "env": {
         "BRANCH_MONKEY_API_URL": "https://p-63-branch-monkey.pages.dev"
       }
