@@ -194,6 +194,10 @@ CURRENT_TASK_ID: Optional[int] = None
 CURRENT_TASK_TITLE: Optional[str] = None
 CURRENT_SESSION_ID: Optional[str] = None
 
+# Track current project focus - all operations will be scoped to this project
+CURRENT_PROJECT_ID: Optional[str] = None
+CURRENT_PROJECT_NAME: Optional[str] = None
+
 CURRENT_SESSION_ID = str(uuid.uuid4())[:8]
 
 
@@ -351,23 +355,60 @@ def api_delete(endpoint: str, **kwargs) -> dict:
 
 @mcp.tool()
 def monkey_status() -> str:
-    """Get the current status of the repository (cloud mode)."""
+    """Get the current status of Branch Monkey."""
     try:
-        tasks = api_get("/api/tasks")
-        task_count = len(tasks.get("tasks", []))
-
-        versions = api_get("/api/versions")
-        version_count = len(versions.get("versions", []))
-
         token_path = get_token_path()
         auth_status = "Device Token" if token_path.exists() else "API Key"
+
+        if not CURRENT_PROJECT_ID:
+            # No project focused - show guidance
+            return f"""# Branch Monkey Status
+
+**Connected to:** {API_URL}
+**Auth:** {auth_status}
+**Project Focus:** ⚠️ None
+
+## Getting Started
+
+To use Branch Monkey, you must first select a project to work on:
+
+1. Run `monkey_project_list` to see available projects
+2. Run `monkey_project_focus <project_id>` to set the active project
+
+All tasks, machines, versions, team members, and domains are scoped to the focused project.
+"""
+
+        # Get counts filtered by project
+        task_endpoint = f"/api/tasks?project_id={CURRENT_PROJECT_ID}"
+        tasks = api_get(task_endpoint)
+        task_count = len(tasks.get("tasks", []))
+
+        version_endpoint = f"/api/versions?project_id={CURRENT_PROJECT_ID}"
+        versions = api_get(version_endpoint)
+        version_count = len(versions.get("versions", []))
+
+        machine_endpoint = f"/api/machines?project_id={CURRENT_PROJECT_ID}"
+        machines = api_get(machine_endpoint)
+        machine_count = len(machines.get("machines", []))
 
         return f"""# Branch Monkey Status
 
 **Connected to:** {API_URL}
 **Auth:** {auth_status}
-**Tasks:** {task_count}
-**Versions:** {version_count}
+**Project Focus:** 🎯 **{CURRENT_PROJECT_NAME}**
+
+## Project Stats
+- **Tasks:** {task_count}
+- **Machines:** {machine_count}
+- **Versions:** {version_count}
+
+## Available Commands
+- `monkey_task_list` - List tasks for this project
+- `monkey_task_create` - Create a new task
+- `monkey_machine_list` - List machines
+- `monkey_version_list` - List versions
+- `monkey_team_list` - List team members
+- `monkey_project_clear` - Clear project focus
 """
     except Exception as e:
         return f"Error connecting to API: {str(e)}"
@@ -432,20 +473,122 @@ If this persists, check:
 
 
 # ============================================================
+# PROJECTS
+# ============================================================
+
+@mcp.tool()
+def monkey_project_list() -> str:
+    """List all projects available to you."""
+    try:
+        result = api_get("/api/repos/projects")
+        projects = result.get("projects", [])
+
+        if not projects:
+            return "No projects found."
+
+        output = "# Projects\n\n"
+        for p in projects:
+            focus_marker = " 👈 **FOCUSED**" if str(p.get("id")) == str(CURRENT_PROJECT_ID) else ""
+            output += f"- **{p.get('name')}** (ID: `{p.get('id')}`){focus_marker}\n"
+            if p.get("description"):
+                output += f"   {p.get('description')[:80]}\n"
+
+        if CURRENT_PROJECT_ID:
+            output += f"\n---\n**Current focus:** {CURRENT_PROJECT_NAME}\n"
+        else:
+            output += f"\n---\n⚠️ No project focused. Use `monkey_project_focus <id>` to set one.\n"
+
+        return output
+    except Exception as e:
+        return f"Error fetching projects: {str(e)}"
+
+
+@mcp.tool()
+def monkey_project_focus(project_id: str) -> str:
+    """Set the project in focus. All operations will be scoped to this project.
+
+    Args:
+        project_id: The UUID of the project to focus on
+    """
+    global CURRENT_PROJECT_ID, CURRENT_PROJECT_NAME
+    try:
+        # Fetch the project to validate and get its name
+        result = api_get(f"/api/repos/projects/{project_id}")
+        project = result.get("project", {})
+
+        if not project:
+            return f"❌ Project not found: {project_id}"
+
+        CURRENT_PROJECT_ID = str(project_id)
+        CURRENT_PROJECT_NAME = project.get("name", "Unknown")
+
+        return f"""# 🎯 Project Focused
+
+**Project:** {CURRENT_PROJECT_NAME}
+**ID:** {CURRENT_PROJECT_ID}
+
+All operations are now scoped to this project:
+- Tasks you create will be in this project
+- Task lists will show only this project's tasks
+- Same for machines, versions, team members, and domains
+
+Use `monkey_project_clear` to remove focus."""
+    except Exception as e:
+        return f"Error focusing project: {str(e)}"
+
+
+@mcp.tool()
+def monkey_project_clear() -> str:
+    """Clear the current project focus."""
+    global CURRENT_PROJECT_ID, CURRENT_PROJECT_NAME
+    CURRENT_PROJECT_ID = None
+    CURRENT_PROJECT_NAME = None
+    return "✅ Project focus cleared. Use `monkey_project_focus <id>` to set a new project."
+
+
+@mcp.tool()
+def monkey_org_list() -> str:
+    """List all organizations."""
+    try:
+        result = api_get("/api/repos/organizations")
+        orgs = result.get("organizations", [])
+
+        if not orgs:
+            return "No organizations found."
+
+        output = "# Organizations\n\n"
+        for o in orgs:
+            output += f"- **{o.get('name')}** (ID: `{o.get('id')}`)\n"
+            if o.get("description"):
+                output += f"   {o.get('description')[:80]}\n"
+
+        return output
+    except Exception as e:
+        return f"Error fetching organizations: {str(e)}"
+
+
+# ============================================================
 # TASKS
 # ============================================================
 
 @mcp.tool()
 def monkey_task_list() -> str:
-    """List all tasks for this project."""
+    """List all tasks for the current project.
+
+    Requires a project to be focused first using monkey_project_focus.
+    """
+    if not CURRENT_PROJECT_ID:
+        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first.\n\nUse `monkey_project_list` to see available projects."
+
     try:
-        result = api_get("/api/tasks")
+        endpoint = f"/api/tasks?project_id={CURRENT_PROJECT_ID}"
+        result = api_get(endpoint)
         tasks = result.get("tasks", [])
 
         if not tasks:
-            return "No tasks found."
+            return f"No tasks found for project **{CURRENT_PROJECT_NAME}**."
 
-        output = "# Tasks\n\n"
+        output = f"# Tasks (Project: {CURRENT_PROJECT_NAME})\n\n"
         for task in tasks:
             status_icon = {"todo": "⬜", "in_progress": "🔄", "done": "✅"}.get(task.get("status"), "⬜")
             task_num = task.get('task_number', 'N/A')
@@ -467,14 +610,21 @@ def monkey_task_create(
     version: str = None,
     machine_id: int = None
 ) -> str:
-    """Create a new task."""
+    """Create a new task in the current project.
+
+    Requires a project to be focused first using monkey_project_focus.
+    """
+    if not CURRENT_PROJECT_ID:
+        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
+
     try:
         data = {
             "title": title,
             "description": description,
             "status": status,
             "priority": priority,
-            "version": version or "backlog"
+            "version": version or "backlog",
+            "project_id": CURRENT_PROJECT_ID
         }
         if machine_id:
             data["machine_id"] = machine_id
@@ -482,7 +632,7 @@ def monkey_task_create(
         result = api_post("/api/tasks", data)
         task = result.get("task", result)
 
-        return f"Created task #{task.get('task_number', task.get('id'))}: {title}"
+        return f"✅ Created task #{task.get('task_number', task.get('id'))}: {title} (Project: {CURRENT_PROJECT_NAME})"
     except Exception as e:
         return f"Error creating task: {str(e)}"
 
@@ -514,7 +664,7 @@ def monkey_task_update(
             updates["machine_id"] = machine_id if machine_id != 0 else None
 
         api_put(f"/api/tasks/{task_id}", updates)
-        return f"Updated task #{task_id}"
+        return f"✅ Updated task #{task_id}"
     except Exception as e:
         return f"Error updating task: {str(e)}"
 
@@ -524,7 +674,7 @@ def monkey_task_delete(task_id: str) -> str:
     """Delete a task by UUID."""
     try:
         api_delete(f"/api/tasks/{task_id}")
-        return f"Deleted task {task_id}"
+        return f"✅ Deleted task {task_id}"
     except Exception as e:
         return f"Error deleting task: {str(e)}"
 
@@ -542,7 +692,7 @@ def monkey_task_work(task_id: int) -> str:
 
         auto_log_activity("task_work_start", duration=1)
 
-        return f"""# Working on Task {task_id}: {task.get('title', 'Unknown')}
+        return f"""# 🔧 Working on Task {task_id}: {task.get('title', 'Unknown')}
 
 **Status:** in_progress
 **Description:** {task.get('description') or '(none)'}
@@ -562,7 +712,7 @@ def monkey_task_log(task_id: int, content: str, update_type: str = "progress") -
             "update_type": update_type
         })
         auto_log_activity("task_log")
-        return f"Logged update to task #{task_id}"
+        return f"✓ Logged update to task #{task_id}"
     except Exception as e:
         return f"Error logging: {str(e)}"
 
@@ -580,7 +730,7 @@ def monkey_task_complete(task_id: int, summary: str) -> str:
         CURRENT_TASK_ID = None
         CURRENT_TASK_TITLE = None
 
-        return f"Task {task_id} completed: {task.get('title', 'Unknown')}\n\nSummary: {summary}"
+        return f"✅ Task {task_id} completed: {task.get('title', 'Unknown')}\n\nSummary: {summary}"
     except Exception as e:
         return f"Error completing task: {str(e)}"
 
@@ -611,108 +761,30 @@ def monkey_task_search(query: str, status: str = None, version: str = None) -> s
         return f"Error searching: {str(e)}"
 
 
-@mcp.tool()
-def monkey_get_recent_tasks(hours: int = 24, limit: int = 10) -> str:
-    """Get tasks worked on recently (in_progress or updated within time window)."""
-    try:
-        result = api_get(f"/api/tasks/recent?hours={hours}&limit={limit}")
-        tasks = result.get("tasks", [])
-
-        if not tasks:
-            return "No recent tasks found."
-
-        output = "# Recent Tasks\n\n"
-        for task in tasks:
-            status_icon = {"todo": "⬜", "in_progress": "🔄", "done": "✅"}.get(task.get("status"), "⬜")
-            task_num = task.get('task_number', 'N/A')
-            updated = task.get('updated_at', '')[:16].replace('T', ' ')
-            output += f"{status_icon} **#{task_num}**: {task.get('title')}\n"
-            output += f"   Last updated: {updated}\n\n"
-
-        return output
-    except Exception as e:
-        return f"Error fetching recent tasks: {str(e)}"
-
-
-@mcp.tool()
-def monkey_auto_resume(user_prompt: str) -> str:
-    """Check if the user's prompt relates to a recent task and auto-resume if matched."""
-    global CURRENT_TASK_ID, CURRENT_TASK_TITLE
-    try:
-        result = api_get("/api/tasks/recent?hours=24&limit=10")
-        tasks = result.get("tasks", [])
-
-        if not tasks:
-            return "No recent tasks found. Consider creating a new task."
-
-        in_progress = [t for t in tasks if t.get("status") == "in_progress"]
-        prompt_lower = user_prompt.lower()
-        prompt_words = set(prompt_lower.split())
-
-        def score_task(task):
-            score = 0
-            title = (task.get('title') or '').lower()
-            desc = (task.get('description') or '').lower()
-            title_words = set(title.split())
-            desc_words = set(desc.split())
-            score += len(prompt_words & title_words) * 3
-            score += len(prompt_words & desc_words) * 1
-            if task.get("status") == "in_progress":
-                score += 5
-            return score
-
-        scored_tasks = [(score_task(t), t) for t in tasks]
-        scored_tasks.sort(key=lambda x: x[0], reverse=True)
-
-        best_score, best_task = scored_tasks[0]
-
-        output = "# Task Context Check\n\n"
-
-        if best_score >= 3:
-            task_id = best_task.get('task_number')
-            task_title = best_task.get('title')
-
-            CURRENT_TASK_ID = task_id
-            CURRENT_TASK_TITLE = task_title
-
-            output += f"## Resuming Task #{task_id}: {task_title}\n\n"
-            output += f"**Status:** {best_task.get('status')}\n"
-            output += f"\nAll prompts will be tracked under this task.\n"
-
-            auto_log_activity("auto_resume", duration=1)
-
-        elif in_progress:
-            task = in_progress[0]
-            output += f"## Active Task Found\n\n"
-            output += f"**#{task.get('task_number')}**: {task.get('title')}\n\n"
-            output += f"Use `monkey_task_work({task.get('task_number')})` to continue it.\n"
-        else:
-            output += "## No Matching Task Found\n\n"
-            output += "Consider creating a new task if this is trackable work.\n"
-
-        return output
-
-    except Exception as e:
-        return f"Error checking context: {str(e)}"
-
-
 # ============================================================
 # VERSIONS
 # ============================================================
 
 @mcp.tool()
 def monkey_version_list() -> str:
-    """List all versions for this project."""
+    """List all versions for the current project.
+
+    Requires a project to be focused first using monkey_project_focus.
+    """
+    if not CURRENT_PROJECT_ID:
+        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first.\n\nUse `monkey_project_list` to see available projects."
+
     try:
-        result = api_get("/api/versions")
+        endpoint = f"/api/versions?project_id={CURRENT_PROJECT_ID}"
+        result = api_get(endpoint)
         versions = result.get("versions", [])
 
         if not versions:
-            return "No versions found."
+            return f"No versions found for project **{CURRENT_PROJECT_NAME}**."
 
-        output = "# Versions\n\n"
+        output = f"# Versions (Project: {CURRENT_PROJECT_NAME})\n\n"
         for v in versions:
-            locked = " (locked)" if v.get("locked") else ""
+            locked = " 🔒" if v.get("locked") else ""
             output += f"- **{v.get('key')}**: {v.get('label')}{locked}\n"
 
         return output
@@ -722,15 +794,22 @@ def monkey_version_list() -> str:
 
 @mcp.tool()
 def monkey_version_create(key: str, label: str, description: str = "", sort_order: int = 0) -> str:
-    """Create a new version."""
+    """Create a new version in the current project.
+
+    Requires a project to be focused first using monkey_project_focus.
+    """
+    if not CURRENT_PROJECT_ID:
+        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
+
     try:
         api_post("/api/versions", {
             "key": key,
             "label": label,
             "description": description,
-            "sort_order": sort_order
+            "sort_order": sort_order,
+            "project_id": CURRENT_PROJECT_ID
         })
-        return f"Created version: {label}"
+        return f"✅ Created version: {label} in project {CURRENT_PROJECT_NAME}"
     except Exception as e:
         return f"Error creating version: {str(e)}"
 
@@ -741,15 +820,22 @@ def monkey_version_create(key: str, label: str, description: str = "", sort_orde
 
 @mcp.tool()
 def monkey_team_list() -> str:
-    """List all team members for this project."""
+    """List all team members for the current project.
+
+    Requires a project to be focused first using monkey_project_focus.
+    """
+    if not CURRENT_PROJECT_ID:
+        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first.\n\nUse `monkey_project_list` to see available projects."
+
     try:
-        result = api_get("/api/team")
-        members = result.get("members", [])
+        endpoint = f"/api/team-members?project_id={CURRENT_PROJECT_ID}"
+        result = api_get(endpoint)
+        members = result.get("team_members", [])
 
         if not members:
-            return "No team members found."
+            return f"No team members found for project **{CURRENT_PROJECT_NAME}**."
 
-        output = "# Team Members\n\n"
+        output = f"# Team Members (Project: {CURRENT_PROJECT_NAME})\n\n"
         for m in members:
             output += f"- **{m.get('name')}** ({m.get('role') or 'member'})\n"
 
@@ -760,15 +846,22 @@ def monkey_team_list() -> str:
 
 @mcp.tool()
 def monkey_team_add(name: str, email: str = "", role: str = "", color: str = "#6366f1") -> str:
-    """Add a new team member."""
+    """Add a new team member to the current project.
+
+    Requires a project to be focused first using monkey_project_focus.
+    """
+    if not CURRENT_PROJECT_ID:
+        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
+
     try:
-        api_post("/api/team", {
+        api_post("/api/team-members", {
             "name": name,
             "email": email,
             "role": role,
-            "color": color
+            "color": color,
+            "project_id": CURRENT_PROJECT_ID
         })
-        return f"Added team member: {name}"
+        return f"✅ Added team member: {name} to project {CURRENT_PROJECT_NAME}"
     except Exception as e:
         return f"Error adding team member: {str(e)}"
 
@@ -779,20 +872,27 @@ def monkey_team_add(name: str, email: str = "", role: str = "", color: str = "#6
 
 @mcp.tool()
 def monkey_machine_list() -> str:
-    """List all machines for this project."""
+    """List all machines for the current project.
+
+    Requires a project to be focused first using monkey_project_focus.
+    """
+    if not CURRENT_PROJECT_ID:
+        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first.\n\nUse `monkey_project_list` to see available projects."
+
     try:
-        result = api_get("/api/machines")
+        endpoint = f"/api/machines?project_id={CURRENT_PROJECT_ID}"
+        result = api_get(endpoint)
         machines = result.get("machines", [])
 
         if not machines:
-            return "No machines found."
+            return f"No machines found for project **{CURRENT_PROJECT_NAME}**."
 
-        output = "# Machines\n\n"
+        output = f"# Machines (Project: {CURRENT_PROJECT_NAME})\n\n"
         for m in machines:
-            status_icon = {"active": "ON", "paused": "PAUSED", "draft": "DRAFT"}.get(m.get("status"), "?")
-            output += f"- [{status_icon}] **{m.get('name')}**\n"
+            status_icon = {"active": "🟢", "paused": "⏸️", "draft": "📝"}.get(m.get("status"), "⚪")
+            output += f"{status_icon} **{m.get('name')}** (ID: `{m.get('id')}`)\n"
             if m.get("description"):
-                output += f"  {m.get('description')[:80]}...\n"
+                output += f"   {m.get('description')[:80]}...\n"
 
         return output
     except Exception as e:
@@ -806,18 +906,57 @@ def monkey_machine_create(
     goal: str = "",
     status: str = "active"
 ) -> str:
-    """Create a new machine (automated business process)."""
+    """Create a new machine (automated business process) in the current project.
+
+    Requires a project to be focused first using monkey_project_focus.
+    """
+    if not CURRENT_PROJECT_ID:
+        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
+
     try:
         result = api_post("/api/machines", {
             "name": name,
             "description": description,
             "goal": goal,
-            "status": status
+            "status": status,
+            "project_id": CURRENT_PROJECT_ID
         })
         machine = result.get("machine", result)
-        return f"Created machine: {name} (ID: {machine.get('id')})"
+        return f"✅ Created machine: {name} (ID: {machine.get('id')}) in project {CURRENT_PROJECT_NAME}"
     except Exception as e:
         return f"Error creating machine: {str(e)}"
+
+
+# ============================================================
+# DOMAINS
+# ============================================================
+
+@mcp.tool()
+def monkey_domain_list() -> str:
+    """List all business domains for the current project.
+
+    Requires a project to be focused first using monkey_project_focus.
+    """
+    if not CURRENT_PROJECT_ID:
+        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first.\n\nUse `monkey_project_list` to see available projects."
+
+    try:
+        endpoint = f"/api/domains?project_id={CURRENT_PROJECT_ID}"
+        result = api_get(endpoint)
+        domains = result.get("domains", [])
+
+        if not domains:
+            return f"No business domains found for project **{CURRENT_PROJECT_NAME}**."
+
+        output = f"# Business Domains (Project: {CURRENT_PROJECT_NAME})\n\n"
+        for d in domains:
+            output += f"- **{d.get('name')}** (ID: `{d.get('id')}`)\n"
+            if d.get("description"):
+                output += f"   {d.get('description')[:80]}...\n"
+
+        return output
+    except Exception as e:
+        return f"Error fetching domains: {str(e)}"
 
 
 # ============================================================
