@@ -480,7 +480,7 @@ If this persists, check:
 def monkey_project_list() -> str:
     """List all projects available to you."""
     try:
-        result = api_get("/api/repos/projects")
+        result = api_get("/api/projects")
         projects = result.get("projects", [])
 
         if not projects:
@@ -513,7 +513,7 @@ def monkey_project_focus(project_id: str) -> str:
     global CURRENT_PROJECT_ID, CURRENT_PROJECT_NAME
     try:
         # Fetch the project to validate and get its name
-        result = api_get(f"/api/repos/projects/{project_id}")
+        result = api_get(f"/api/projects/{project_id}")
         project = result.get("project", {})
 
         if not project:
@@ -550,7 +550,7 @@ def monkey_project_clear() -> str:
 def monkey_org_list() -> str:
     """List all organizations."""
     try:
-        result = api_get("/api/repos/organizations")
+        result = api_get("/api/organizations")
         orgs = result.get("organizations", [])
 
         if not orgs:
