@@ -291,6 +291,7 @@ def get_session():
 
 
 def api_request(method: str, endpoint: str, **kwargs) -> dict:
+    global API_KEY, _session
     url = f"{API_URL.rstrip('/')}/{endpoint.lstrip('/')}"
 
     headers = kwargs.pop("headers", {})
@@ -303,6 +304,26 @@ def api_request(method: str, endpoint: str, **kwargs) -> dict:
 
     session = get_session()
     response = session.request(method, url, **kwargs)
+
+    # Auto re-authenticate on 401
+    if response.status_code == 401:
+        print("\n[Branch Monkey] Token expired, re-authenticating...", file=sys.stderr)
+        clear_token()
+        _session = None
+
+        new_token = device_code_flow(API_URL)
+        if new_token:
+            save_token(new_token, API_URL)
+            API_KEY = new_token
+
+            # Retry the request with new token
+            headers["Authorization"] = f"Bearer {API_KEY}"
+            kwargs["headers"] = headers
+            session = get_session()
+            response = session.request(method, url, **kwargs)
+        else:
+            response.raise_for_status()
+
     response.raise_for_status()
 
     return response.json() if response.content else {}
