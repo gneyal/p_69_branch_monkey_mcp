@@ -248,7 +248,18 @@ if not API_KEY:
         if API_KEY:
             save_token(API_KEY, API_URL)
         else:
-            print("Authentication failed. Please try again.", file=sys.stderr)
+            print("\n" + "=" * 60, file=sys.stderr)
+            print("  AUTHENTICATION FAILED", file=sys.stderr)
+            print("=" * 60, file=sys.stderr)
+            print("\nCould not authenticate with Branch Monkey Cloud.", file=sys.stderr)
+            print("\nPossible reasons:", file=sys.stderr)
+            print("  - Browser approval was denied or timed out", file=sys.stderr)
+            print("  - Network connectivity issues", file=sys.stderr)
+            print(f"  - Unable to reach {API_URL}", file=sys.stderr)
+            print("\nTo try again:", file=sys.stderr)
+            print("  1. Restart Claude Code", file=sys.stderr)
+            print("  2. Or use the `monkey_login` tool after startup", file=sys.stderr)
+            print("=" * 60 + "\n", file=sys.stderr)
             sys.exit(1)
 
 mcp = FastMCP("Branch Monkey")
@@ -351,9 +362,52 @@ def monkey_logout() -> str:
 Your authentication token has been cleared.
 On next use, you'll be prompted to approve the device again via your browser.
 
-To re-authenticate now, restart Claude Code."""
+To re-authenticate now, use `monkey_login`."""
     except Exception as e:
         return f"Error logging out: {str(e)}"
+
+
+@mcp.tool()
+def monkey_login() -> str:
+    """Force re-authentication via browser approval. Use this if you're having auth issues."""
+    global API_KEY, _session
+    try:
+        # Clear existing token
+        clear_token()
+
+        # Reset session to clear cached auth
+        _session = None
+
+        # Run device code flow
+        new_token = device_code_flow(API_URL)
+
+        if new_token:
+            save_token(new_token, API_URL)
+            API_KEY = new_token
+            return """# Login Successful
+
+You are now authenticated with Branch Monkey Cloud.
+Your token has been saved for future sessions.
+
+Use `monkey_status` to verify your connection."""
+        else:
+            return """# Login Failed
+
+Authentication was not completed. This could be because:
+- The browser approval was denied
+- The code expired (15 minute timeout)
+- Network connectivity issues
+
+Please try again with `monkey_login`."""
+    except Exception as e:
+        return f"""# Login Error
+
+Failed to authenticate: {str(e)}
+
+If this persists, check:
+1. Network connectivity to {API_URL}
+2. That you can access {API_URL}/approve in your browser
+3. Try logging out with `monkey_logout` and restart Claude Code"""
 
 
 # ============================================================

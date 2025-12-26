@@ -34,6 +34,7 @@ Restart Claude Code. On first use, a browser will open for you to log in and app
 
 ### Status & Auth
 - `monkey_status` - Get connection status
+- `monkey_login` - Force re-authentication (use if having auth issues)
 - `monkey_logout` - Clear auth token
 
 ### Tasks
@@ -59,6 +60,25 @@ Restart Claude Code. On first use, a browser will open for you to log in and app
 ### Machines
 - `monkey_machine_list` - List machines
 - `monkey_machine_create` - Create a machine
+
+## Troubleshooting
+
+### Authentication Issues
+
+If you're having trouble connecting:
+
+1. **Use `monkey_login`** - Forces re-authentication via browser
+2. **Check the token file** - Stored at `~/.branch-monkey/token.json`
+3. **Clear and retry** - Use `monkey_logout`, then restart Claude Code
+4. **Check network** - Ensure you can access https://p-63-branch-monkey.pages.dev
+
+### First-Time Setup
+
+On first use:
+1. A browser window opens automatically
+2. Log in to Branch Monkey (or create an account)
+3. Approve the device when prompted
+4. Return to Claude Code - you're connected!
 
 ## Requirements
 
