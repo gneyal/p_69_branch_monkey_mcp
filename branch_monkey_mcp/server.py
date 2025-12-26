@@ -60,15 +60,18 @@ def load_stored_token(api_url: str) -> Optional[dict]:
     return None
 
 
-def save_token(token: str, api_url: str):
+def save_token(token: str, api_url: str, org_id: str = None):
     """Save token to disk."""
     token_path = get_token_path()
+    data = {
+        "access_token": token,
+        "api_url": api_url,
+        "saved_at": time.time()
+    }
+    if org_id:
+        data["org_id"] = org_id
     with open(token_path, "w") as f:
-        json.dump({
-            "access_token": token,
-            "api_url": api_url,
-            "saved_at": time.time()
-        }, f)
+        json.dump(data, f)
     os.chmod(token_path, 0o600)
 
 
@@ -95,8 +98,11 @@ def get_machine_name() -> str:
         return "Claude Code MCP"
 
 
-def device_code_flow(api_url: str) -> Optional[str]:
-    """Run the device code flow to authenticate."""
+def device_code_flow(api_url: str) -> Optional[dict]:
+    """Run the device code flow to authenticate.
+
+    Returns dict with 'access_token' and 'org_id' on success, None on failure.
+    """
     print("\n" + "=" * 60, file=sys.stderr)
     print("  Branch Monkey - Authentication Required", file=sys.stderr)
     print("=" * 60, file=sys.stderr)
@@ -156,9 +162,11 @@ def device_code_flow(api_url: str) -> Optional[str]:
             poll_data = poll_response.json()
 
             if poll_data.get("status") == "approved":
-                token = poll_data.get("access_token")
                 print("  Approved! You can now use Branch Monkey.", file=sys.stderr)
-                return token
+                return {
+                    "access_token": poll_data.get("access_token"),
+                    "org_id": poll_data.get("org_id")
+                }
 
         print("  Timeout waiting for approval.", file=sys.stderr)
         return None
@@ -241,16 +249,20 @@ except ImportError:
 
 API_URL = os.environ.get("BRANCH_MONKEY_API_URL", "https://p-63-branch-monkey.pages.dev")
 API_KEY = os.environ.get("BRANCH_MONKEY_API_KEY")
+ORG_ID: Optional[str] = None  # Set after auth
 REQUEST_TIMEOUT = 30
 
 if not API_KEY:
     stored = load_stored_token(API_URL)
     if stored:
         API_KEY = stored.get("access_token")
+        ORG_ID = stored.get("org_id")
     else:
-        API_KEY = device_code_flow(API_URL)
-        if API_KEY:
-            save_token(API_KEY, API_URL)
+        auth_result = device_code_flow(API_URL)
+        if auth_result:
+            API_KEY = auth_result.get("access_token")
+            ORG_ID = auth_result.get("org_id")
+            save_token(API_KEY, API_URL, ORG_ID)
         else:
             print("\n" + "=" * 60, file=sys.stderr)
             print("  AUTHENTICATION FAILED", file=sys.stderr)
@@ -295,12 +307,14 @@ def get_session():
 
 
 def api_request(method: str, endpoint: str, **kwargs) -> dict:
-    global API_KEY, _session
+    global API_KEY, ORG_ID, _session
     url = f"{API_URL.rstrip('/')}/{endpoint.lstrip('/')}"
 
     headers = kwargs.pop("headers", {})
     if API_KEY:
         headers["Authorization"] = f"Bearer {API_KEY}"
+    if ORG_ID:
+        headers["X-Org-Id"] = ORG_ID
     headers["Content-Type"] = "application/json"
 
     kwargs["headers"] = headers
@@ -315,13 +329,16 @@ def api_request(method: str, endpoint: str, **kwargs) -> dict:
         clear_token()
         _session = None
 
-        new_token = device_code_flow(API_URL)
-        if new_token:
-            save_token(new_token, API_URL)
-            API_KEY = new_token
+        auth_result = device_code_flow(API_URL)
+        if auth_result:
+            API_KEY = auth_result.get("access_token")
+            ORG_ID = auth_result.get("org_id")
+            save_token(API_KEY, API_URL, ORG_ID)
 
             # Retry the request with new token
             headers["Authorization"] = f"Bearer {API_KEY}"
+            if ORG_ID:
+                headers["X-Org-Id"] = ORG_ID
             kwargs["headers"] = headers
             session = get_session()
             response = session.request(method, url, **kwargs)
@@ -432,7 +449,7 @@ To re-authenticate now, use `monkey_login`."""
 @mcp.tool()
 def monkey_login() -> str:
     """Force re-authentication via browser approval. Use this if you're having auth issues."""
-    global API_KEY, _session
+    global API_KEY, ORG_ID, _session
     try:
         # Clear existing token
         clear_token()
@@ -441,11 +458,12 @@ def monkey_login() -> str:
         _session = None
 
         # Run device code flow
-        new_token = device_code_flow(API_URL)
+        auth_result = device_code_flow(API_URL)
 
-        if new_token:
-            save_token(new_token, API_URL)
-            API_KEY = new_token
+        if auth_result:
+            API_KEY = auth_result.get("access_token")
+            ORG_ID = auth_result.get("org_id")
+            save_token(API_KEY, API_URL, ORG_ID)
             return """# Login Successful
 
 You are now authenticated with Branch Monkey Cloud.
