@@ -1,0 +1,70 @@
+# Branch Monkey MCP Server
+
+MCP (Model Context Protocol) server for [Branch Monkey](https://p-63-branch-monkey.pages.dev) - connecting Claude Code to your task management and team collaboration platform.
+
+## Quick Start
+
+Add this to your project's `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "branch-monkey": {
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/gneyal/branch-monkey-mcp.git", "branch-monkey-mcp"],
+      "env": {
+        "BRANCH_MONKEY_API_URL": "https://p-63-branch-monkey.pages.dev"
+      }
+    }
+  }
+}
+```
+
+Restart Claude Code. On first use, a browser will open for you to log in and approve the device.
+
+## Features
+
+- **No API key needed** - Authenticates via browser approval
+- **Automatic token storage** - Saved in `~/.branch-monkey/token.json`
+- **Task management** - Create, update, track tasks
+- **Team collaboration** - Share tasks with your team
+- **Prompt tracking** - Associate prompts with tasks
+
+## Available Tools
+
+### Status & Auth
+- `monkey_status` - Get connection status
+- `monkey_logout` - Clear auth token
+
+### Tasks
+- `monkey_task_list` - List all tasks
+- `monkey_task_create` - Create a new task
+- `monkey_task_update` - Update a task
+- `monkey_task_delete` - Delete a task
+- `monkey_task_work` - Start working on a task
+- `monkey_task_log` - Log progress on a task
+- `monkey_task_complete` - Mark task as complete
+- `monkey_task_search` - Search tasks
+- `monkey_get_recent_tasks` - Get recently worked tasks
+- `monkey_auto_resume` - Auto-detect related tasks
+
+### Versions
+- `monkey_version_list` - List versions
+- `monkey_version_create` - Create a version
+
+### Team
+- `monkey_team_list` - List team members
+- `monkey_team_add` - Add team member
+
+### Machines
+- `monkey_machine_list` - List machines
+- `monkey_machine_create` - Create a machine
+
+## Requirements
+
+- Python 3.10+
+- [uv](https://docs.astral.sh/uv/) package manager
+
+## License
+
+MIT
