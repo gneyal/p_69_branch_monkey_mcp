@@ -315,6 +315,8 @@ def api_request(method: str, endpoint: str, **kwargs) -> dict:
         headers["Authorization"] = f"Bearer {API_KEY}"
     if ORG_ID:
         headers["X-Org-Id"] = ORG_ID
+    if CURRENT_PROJECT_ID:
+        headers["X-Project-Id"] = CURRENT_PROJECT_ID
     headers["Content-Type"] = "application/json"
 
     kwargs["headers"] = headers

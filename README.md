@@ -37,6 +37,12 @@ Restart Claude Code. On first use, a browser will open for you to log in and app
 - `monkey_login` - Force re-authentication (use if having auth issues)
 - `monkey_logout` - Clear auth token
 
+### Projects & Organizations
+- `monkey_project_list` - List all projects in your organization
+- `monkey_project_focus` - Set focus to a specific project
+- `monkey_project_clear` - Clear project focus
+- `monkey_org_list` - List organizations you have access to
+
 ### Tasks
 - `monkey_task_list` - List all tasks
 - `monkey_task_create` - Create a new task
@@ -77,8 +83,11 @@ If you're having trouble connecting:
 On first use:
 1. A browser window opens automatically
 2. Log in to Branch Monkey (or create an account)
-3. Approve the device when prompted
-4. Return to Claude Code - you're connected!
+3. Select the organization you want to connect to
+4. Approve the device when prompted
+5. Return to Claude Code - you're connected!
+
+After connecting, use `monkey_project_list` to see available projects and `monkey_project_focus <id>` to select one.
 
 ## Requirements
 
