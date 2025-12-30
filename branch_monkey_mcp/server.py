@@ -659,7 +659,7 @@ def monkey_task_create(
 
 @mcp.tool()
 def monkey_task_update(
-    task_id: int,
+    task_id: str,
     title: str = None,
     description: str = None,
     status: str = None,
@@ -667,7 +667,11 @@ def monkey_task_update(
     version: str = None,
     machine_id: int = None
 ) -> str:
-    """Update an existing task."""
+    """Update an existing task.
+
+    Args:
+        task_id: Task number (e.g., "123") or UUID (e.g., "abc-def-...")
+    """
     try:
         updates = {}
         if title is not None:
@@ -684,7 +688,7 @@ def monkey_task_update(
             updates["machine_id"] = machine_id if machine_id != 0 else None
 
         api_put(f"/api/tasks/{task_id}", updates)
-        return f"✅ Updated task #{task_id}"
+        return f"✅ Updated task {task_id}"
     except Exception as e:
         return f"Error updating task: {str(e)}"
 
@@ -774,7 +778,9 @@ def monkey_task_search(query: str, status: str = None, version: str = None) -> s
         output = f"# Tasks matching '{query}'\n\n"
         for task in tasks:
             status_icon = {"todo": "⬜", "in_progress": "🔄", "done": "✅"}.get(task.get("status"), "⬜")
-            output += f"{status_icon} **{task.get('task_number')}**: {task.get('title')}\n"
+            task_num = task.get('task_number', 'None')
+            task_uuid = task.get('id', 'N/A')
+            output += f"{status_icon} **#{task_num}** `{task_uuid}`: {task.get('title')}\n"
 
         return output
     except Exception as e:
