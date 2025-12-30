@@ -742,19 +742,66 @@ def monkey_task_log(task_id: int, content: str, update_type: str = "progress") -
 
 
 @mcp.tool()
-def monkey_task_complete(task_id: int, summary: str) -> str:
-    """Mark a task as complete."""
+def monkey_task_complete(
+    task_id: int,
+    summary: str,
+    files_changed: str = None,
+    context_name: str = None
+) -> str:
+    """Mark a task as complete and automatically create a linked context.
+
+    Args:
+        task_id: The task number to complete
+        summary: Summary of what was done
+        files_changed: Comma-separated list of files that were modified (e.g., "src/foo.ts, src/bar.ts")
+        context_name: Optional name for the context (defaults to task title)
+    """
     global CURRENT_TASK_ID, CURRENT_TASK_TITLE
     try:
         result = api_post(f"/api/tasks/{task_id}/complete", {"summary": summary})
         task = result.get("task", {})
+        task_title = task.get('title', 'Unknown')
+        task_uuid = task.get('id')
 
         auto_log_activity("task_complete", duration=1)
 
         CURRENT_TASK_ID = None
         CURRENT_TASK_TITLE = None
 
-        return f"✅ Task {task_id} completed: {task.get('title', 'Unknown')}\n\nSummary: {summary}"
+        output = f"✅ Task {task_id} completed: {task_title}\n\nSummary: {summary}"
+
+        # Auto-create and link context if project is focused
+        if CURRENT_PROJECT_ID and task_uuid:
+            try:
+                # Build context content
+                context_content = ""
+                if files_changed:
+                    context_content += f"Files changed:\n"
+                    for f in files_changed.split(","):
+                        context_content += f"- {f.strip()}\n"
+                    context_content += "\n"
+                context_content += summary
+
+                # Create context
+                ctx_name = context_name or f"Task #{task_id}: {task_title[:50]}"
+                ctx_result = api_post("/api/contexts", {
+                    "name": ctx_name,
+                    "content": context_content,
+                    "context_type": "code",
+                    "project_id": CURRENT_PROJECT_ID
+                })
+                context = ctx_result.get("context", ctx_result)
+                context_id = context.get("id")
+
+                # Link context to task
+                if context_id:
+                    api_post(f"/api/contexts/task/{task_uuid}", {"context_id": context_id})
+                    output += f"\n\n📎 Context created and linked: {ctx_name}"
+
+            except Exception as ctx_err:
+                output += f"\n\n⚠️ Could not create context: {str(ctx_err)}"
+
+        return output
     except Exception as e:
         return f"Error completing task: {str(e)}"
 
