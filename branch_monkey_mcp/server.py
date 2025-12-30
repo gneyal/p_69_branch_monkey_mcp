@@ -628,7 +628,7 @@ def monkey_task_create(
     status: str = "todo",
     priority: int = 0,
     version: str = None,
-    machine_id: int = None
+    machine_id: str = None
 ) -> str:
     """Create a new task in the current project.
 
@@ -665,7 +665,7 @@ def monkey_task_update(
     status: str = None,
     priority: int = None,
     version: str = None,
-    machine_id: int = None
+    machine_id: str = None
 ) -> str:
     """Update an existing task.
 
@@ -685,7 +685,7 @@ def monkey_task_update(
         if version is not None:
             updates["version"] = version
         if machine_id is not None:
-            updates["machine_id"] = machine_id if machine_id != 0 else None
+            updates["machine_id"] = machine_id if machine_id else None
 
         api_put(f"/api/tasks/{task_id}", updates)
         return f"✅ Updated task {task_id}"
