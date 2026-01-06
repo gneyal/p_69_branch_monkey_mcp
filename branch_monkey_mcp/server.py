@@ -748,7 +748,12 @@ def monkey_task_complete(
     files_changed: str = None,
     context_name: str = None
 ) -> str:
-    """Mark a task as complete and automatically create a linked context.
+    """Mark a task as complete, create a PR using gh CLI, and link everything.
+
+    This will:
+    1. Run 'gh pr create --fill' to create a GitHub PR
+    2. Mark the task as complete with the PR URL
+    3. Create a linked context with the summary
 
     Args:
         task_id: The task number to complete
@@ -758,7 +763,37 @@ def monkey_task_complete(
     """
     global CURRENT_TASK_ID, CURRENT_TASK_TITLE
     try:
-        result = api_post(f"/api/tasks/{task_id}/complete", {"summary": summary})
+        github_pr_url = None
+        pr_output = ""
+
+        # Try to create PR using gh CLI
+        try:
+            pr_result = subprocess.run(
+                ["gh", "pr", "create", "--fill"],
+                capture_output=True,
+                text=True,
+                timeout=60
+            )
+            pr_output = pr_result.stdout + pr_result.stderr
+
+            # Extract PR URL from output (gh pr create outputs the URL)
+            import re
+            pr_match = re.search(r'https://github\.com/[^/]+/[^/]+/pull/\d+', pr_output)
+            if pr_match:
+                github_pr_url = pr_match.group(0)
+        except FileNotFoundError:
+            pr_output = "gh CLI not found - skipping PR creation"
+        except subprocess.TimeoutExpired:
+            pr_output = "gh pr create timed out"
+        except Exception as e:
+            pr_output = f"PR creation failed: {str(e)}"
+
+        payload = {"summary": summary}
+        if github_pr_url:
+            payload["github_pr_url"] = github_pr_url
+        if files_changed:
+            payload["files_changed"] = files_changed
+        result = api_post(f"/api/tasks/{task_id}/complete", payload)
         task = result.get("task", {})
         task_title = task.get('title', 'Unknown')
         task_uuid = task.get('id')
@@ -769,6 +804,10 @@ def monkey_task_complete(
         CURRENT_TASK_TITLE = None
 
         output = f"✅ Task {task_id} completed: {task_title}\n\nSummary: {summary}"
+        if github_pr_url:
+            output += f"\n\n🔗 PR created: {github_pr_url}"
+        elif pr_output:
+            output += f"\n\n⚠️ PR: {pr_output}"
 
         # Auto-create and link context if project is focused
         if CURRENT_PROJECT_ID and task_uuid:
