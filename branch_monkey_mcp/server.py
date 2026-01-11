@@ -793,7 +793,8 @@ def monkey_task_complete(
             payload["github_pr_url"] = github_pr_url
         if files_changed:
             payload["files_changed"] = files_changed
-        result = api_post(f"/api/tasks/{task_id}/complete", payload)
+        # Use /in_review endpoint to move task to "In Review" status for human verification
+        result = api_post(f"/api/tasks/{task_id}/in_review", payload)
         task = result.get("task", {})
         task_title = task.get('title', 'Unknown')
         task_uuid = task.get('id')
