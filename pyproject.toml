@@ -25,10 +25,13 @@ classifiers = [
 dependencies = [
     "mcp>=1.0.0",
     "requests>=2.28.0",
+    "httpx>=0.24.0",
+    "websockets>=11.0",
 ]
 
 [project.scripts]
 branch-monkey-mcp = "branch_monkey_mcp.server:main"
+branch-monkey-relay = "branch_monkey_mcp.relay_client:main"
 
 [project.urls]
 Homepage = "https://github.com/gneyal/branch-monkey-mcp"
