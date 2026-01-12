@@ -79,3 +79,12 @@
 2026-01-12 19:44:46.803016: Hook started
 2026-01-12 19:44:46.803478: Parsed JSON: cwd=/Users/eyalgoren/Code/p_69_branch_monkey_mcp, session=76bdc4e5-b95b-48ba-91ea-8e1007b260e9
 2026-01-12 19:44:46.837502: Logged prompt id=27, model=claude-opus-4-5-20251101, tokens=9329+882
+2026-01-13 00:24:33.724461: Hook started
+2026-01-13 00:24:33.724527: Parsed JSON: cwd=/Users/eyalgoren/Code/p_69_branch_monkey_mcp, session=76bdc4e5-b95b-48ba-91ea-8e1007b260e9
+2026-01-13 00:24:33.744521: Logged prompt id=28, model=claude-opus-4-5-20251101, tokens=10+961
+2026-01-13 00:44:42.241927: Hook started
+2026-01-13 00:44:42.242089: Parsed JSON: cwd=/Users/eyalgoren/Code/p_69_branch_monkey_mcp, session=76bdc4e5-b95b-48ba-91ea-8e1007b260e9
+2026-01-13 00:44:42.285701: Logged prompt id=29, model=claude-opus-4-5-20251101, tokens=10+218
+2026-01-13 00:44:46.970424: Hook started
+2026-01-13 00:44:46.970539: Parsed JSON: cwd=/Users/eyalgoren/Code/p_69_branch_monkey_mcp, session=76bdc4e5-b95b-48ba-91ea-8e1007b260e9
+2026-01-13 00:44:46.999778: Logged prompt id=30, model=claude-opus-4-5-20251101, tokens=10+67
