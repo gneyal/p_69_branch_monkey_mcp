@@ -843,6 +843,11 @@ class DevServerRequest(BaseModel):
     task_number: int
 
 
+class OpenInEditorRequest(BaseModel):
+    task_number: Optional[int] = None
+    path: Optional[str] = None
+
+
 # Track running dev servers
 _running_dev_servers: Dict[int, dict] = {}
 BASE_DEV_PORT = 6000
@@ -977,6 +982,51 @@ def get_branch_diff(branch: str):
             )
 
         return {"diff": result.stdout or "No changes", "branch": branch}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/local-claude/open-in-editor")
+def open_in_editor(request: OpenInEditorRequest):
+    """Open a worktree or path in VS Code."""
+    target_path = None
+
+    if request.path:
+        target_path = Path(request.path)
+    elif request.task_number:
+        target_path = find_worktree_path(request.task_number)
+        if not target_path:
+            raise HTTPException(status_code=404, detail=f"No worktree found for task {request.task_number}")
+    else:
+        raise HTTPException(status_code=400, detail="Either task_number or path required")
+
+    if not target_path.exists():
+        raise HTTPException(status_code=404, detail=f"Path does not exist: {target_path}")
+
+    try:
+        # Try to open in VS Code
+        result = subprocess.run(
+            ["code", str(target_path)],
+            capture_output=True,
+            text=True
+        )
+
+        if result.returncode != 0:
+            # VS Code not found, try 'open' on macOS
+            import platform
+            if platform.system() == "Darwin":
+                subprocess.run(["open", str(target_path)])
+            else:
+                raise HTTPException(status_code=500, detail="Could not open editor. VS Code not found.")
+
+        return {"success": True, "path": str(target_path)}
+    except FileNotFoundError:
+        # 'code' command not found
+        import platform
+        if platform.system() == "Darwin":
+            subprocess.run(["open", str(target_path)])
+            return {"success": True, "path": str(target_path), "editor": "finder"}
+        raise HTTPException(status_code=500, detail="VS Code CLI not found. Install 'code' command from VS Code.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
