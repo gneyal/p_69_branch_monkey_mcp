@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "branch-monkey-mcp"
-version = "0.1.0"
+version = "0.2.0"
 description = "Branch Monkey MCP Server for Claude Code - Task management and team collaboration"
 readme = "README.md"
 requires-python = ">=3.10"
