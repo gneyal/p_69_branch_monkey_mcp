@@ -461,17 +461,21 @@ async def start_relay_client_async(
     return client
 
 
-def start_server_in_background(port: int = 8081):
+def start_server_in_background(port: int = 8081, working_dir: Optional[str] = None):
     """Start the local agent server in a background thread."""
     import threading
 
     def run():
-        from .local_server import run_server
+        from .local_server import run_server, set_default_working_dir
+        if working_dir:
+            set_default_working_dir(working_dir)
         run_server(port=port)
 
     thread = threading.Thread(target=run, daemon=True)
     thread.start()
     print(f"[Relay] Local agent server started on port {port}")
+    if working_dir:
+        print(f"[Relay] Working directory: {working_dir}")
     return thread
 
 
@@ -506,17 +510,26 @@ def main():
         action="store_true",
         help="Skip starting local server (use if server is running separately)"
     )
+    parser.add_argument(
+        "--dir", "-d",
+        default=os.getcwd(),
+        help="Working directory for agent execution (default: current directory)"
+    )
 
     args = parser.parse_args()
+
+    # Resolve working directory to absolute path
+    working_dir = os.path.abspath(args.dir)
 
     print(f"\n🐵 Branch Monkey Relay")
     print(f"   Cloud: {args.cloud_url}")
     print(f"   Local port: {args.port}")
+    print(f"   Working dir: {working_dir}")
 
     # Start local agent server unless --no-server is specified
     if not args.no_server:
         print(f"\n[Relay] Starting local agent server...")
-        start_server_in_background(port=args.port)
+        start_server_in_background(port=args.port, working_dir=working_dir)
         # Give server time to start
         time.sleep(1)
     else:

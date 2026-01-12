@@ -54,6 +54,25 @@ app.add_middleware(
 
 
 # =============================================================================
+# Default Working Directory
+# =============================================================================
+
+_default_working_dir: Optional[str] = None
+
+
+def set_default_working_dir(directory: str) -> None:
+    """Set the default working directory for agent execution."""
+    global _default_working_dir
+    _default_working_dir = directory
+    print(f"[Server] Default working directory: {directory}")
+
+
+def get_default_working_dir() -> str:
+    """Get the default working directory (falls back to cwd)."""
+    return _default_working_dir or os.getcwd()
+
+
+# =============================================================================
 # Git Utilities
 # =============================================================================
 
@@ -276,7 +295,7 @@ class LocalAgentManager:
             )
 
         agent_id = str(uuid.uuid4())[:8]
-        repo_dir = working_dir or os.getcwd()
+        repo_dir = working_dir or get_default_working_dir()
         work_dir = repo_dir
         branch = None
         branch_created = False
