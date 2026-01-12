@@ -798,6 +798,17 @@ def health_check():
     return {"status": "ok", "service": "branch-monkey-relay"}
 
 
+@app.get("/api/status")
+def api_status():
+    """Status endpoint for frontend compatibility."""
+    return {
+        "status": "ok",
+        "service": "branch-monkey-relay",
+        "agents": len(agent_manager._agents),
+        "mode": "local"
+    }
+
+
 # =============================================================================
 # Server Runner
 # =============================================================================
