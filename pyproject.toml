@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "branch-monkey-mcp"
-version = "0.2.0"
+version = "0.3.0"
 description = "Branch Monkey MCP Server for Claude Code - Task management and team collaboration"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -27,6 +27,8 @@ dependencies = [
     "requests>=2.28.0",
     "httpx>=0.24.0",
     "supabase>=2.27.0",
+    "fastapi>=0.100.0",
+    "uvicorn>=0.22.0",
 ]
 
 [project.scripts]

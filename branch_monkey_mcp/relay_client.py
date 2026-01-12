@@ -461,6 +461,20 @@ async def start_relay_client_async(
     return client
 
 
+def start_server_in_background(port: int = 8081):
+    """Start the local agent server in a background thread."""
+    import threading
+
+    def run():
+        from .local_server import run_server
+        run_server(port=port)
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    print(f"[Relay] Local agent server started on port {port}")
+    return thread
+
+
 def main():
     """CLI entry point for branch-monkey-relay."""
     # Ensure output is not buffered (for background processes)
@@ -487,13 +501,28 @@ def main():
         default=None,
         help="Machine name (default: hostname)"
     )
+    parser.add_argument(
+        "--no-server",
+        action="store_true",
+        help="Skip starting local server (use if server is running separately)"
+    )
 
     args = parser.parse_args()
 
-    print(f"\n[Relay] Branch Monkey Relay Client")
-    print(f"[Relay] Cloud URL: {args.cloud_url}")
-    print(f"[Relay] Local port: {args.port}")
+    print(f"\n🐵 Branch Monkey Relay")
+    print(f"   Cloud: {args.cloud_url}")
+    print(f"   Local port: {args.port}")
 
+    # Start local agent server unless --no-server is specified
+    if not args.no_server:
+        print(f"\n[Relay] Starting local agent server...")
+        start_server_in_background(port=args.port)
+        # Give server time to start
+        time.sleep(1)
+    else:
+        print(f"\n[Relay] Skipping local server (--no-server)")
+
+    print(f"\n[Relay] Starting cloud relay connection...")
     run_relay_client(
         cloud_url=args.cloud_url,
         local_port=args.port,
