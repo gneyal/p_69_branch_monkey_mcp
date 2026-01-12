@@ -864,10 +864,16 @@ def monkey_task_search(query: str, status: str = None, version: str = None) -> s
 
         output = f"# Tasks matching '{query}'\n\n"
         for task in tasks:
-            status_icon = {"todo": "⬜", "in_progress": "🔄", "done": "✅"}.get(task.get("status"), "⬜")
+            status_icon = {"todo": "⬜", "in_progress": "🔄", "done": "✅", "in_review": "👀"}.get(task.get("status"), "⬜")
             task_num = task.get('task_number', 'None')
             task_uuid = task.get('id', 'N/A')
             output += f"{status_icon} **#{task_num}** `{task_uuid}`: {task.get('title')}\n"
+            if task.get("description"):
+                desc = task.get('description', '')
+                # Show full description, truncate if very long
+                if len(desc) > 500:
+                    desc = desc[:500] + "..."
+                output += f"   📝 {desc}\n"
 
         return output
     except Exception as e:
