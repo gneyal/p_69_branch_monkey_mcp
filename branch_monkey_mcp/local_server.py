@@ -950,6 +950,37 @@ def merge_preview(task_number: int, branch: str):
     }
 
 
+@app.get("/api/local-claude/diff")
+def get_branch_diff(branch: str):
+    """Get diff between a branch and main."""
+    work_dir = get_default_working_dir()
+    git_root = get_git_root(work_dir)
+    if not git_root:
+        raise HTTPException(status_code=400, detail="Not in a git repository")
+
+    try:
+        # Get diff between main and the branch
+        result = subprocess.run(
+            ["git", "diff", "main..." + branch],
+            cwd=git_root,
+            capture_output=True,
+            text=True
+        )
+
+        if result.returncode != 0:
+            # Try without the ... syntax
+            result = subprocess.run(
+                ["git", "diff", "main", branch],
+                cwd=git_root,
+                capture_output=True,
+                text=True
+            )
+
+        return {"diff": result.stdout or "No changes", "branch": branch}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/local-claude/merge")
 def merge_worktree_branch(request: MergeRequest):
     """Merge a worktree branch into the target branch."""

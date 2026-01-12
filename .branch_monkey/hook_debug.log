@@ -31,3 +31,51 @@
 2026-01-12 13:19:03.326691: Hook started
 2026-01-12 13:19:03.326776: Parsed JSON: cwd=/Users/eyalgoren/Code/p_69_branch_monkey_mcp, session=76bdc4e5-b95b-48ba-91ea-8e1007b260e9
 2026-01-12 13:19:03.341233: Logged prompt id=11, model=claude-opus-4-5-20251101, tokens=9+106
+2026-01-12 14:16:35.794299: Hook started
+2026-01-12 14:16:35.794378: Parsed JSON: cwd=/Users/eyalgoren/Code/p_69_branch_monkey_mcp, session=76bdc4e5-b95b-48ba-91ea-8e1007b260e9
+2026-01-12 14:16:35.813380: Logged prompt id=12, model=claude-opus-4-5-20251101, tokens=9+409
+2026-01-12 14:18:02.585800: Hook started
+2026-01-12 14:18:02.585991: Parsed JSON: cwd=/Users/eyalgoren/Code/p_69_branch_monkey_mcp, session=76bdc4e5-b95b-48ba-91ea-8e1007b260e9
+2026-01-12 14:18:02.614276: Logged prompt id=13, model=claude-opus-4-5-20251101, tokens=8+250
+2026-01-12 14:19:21.509828: Hook started
+2026-01-12 14:19:21.510041: Parsed JSON: cwd=/Users/eyalgoren/Code/p_69_branch_monkey_mcp, session=76bdc4e5-b95b-48ba-91ea-8e1007b260e9
+2026-01-12 14:19:21.532124: Logged prompt id=14, model=claude-opus-4-5-20251101, tokens=8+528
+2026-01-12 14:26:31.143366: Hook started
+2026-01-12 14:26:31.143561: Parsed JSON: cwd=/Users/eyalgoren/Code/p_69_branch_monkey_mcp, session=76bdc4e5-b95b-48ba-91ea-8e1007b260e9
+2026-01-12 14:26:31.166505: Logged prompt id=15, model=claude-opus-4-5-20251101, tokens=8+458
+2026-01-12 14:30:08.565975: Hook started
+2026-01-12 14:30:08.566187: Parsed JSON: cwd=/Users/eyalgoren/Code/p_69_branch_monkey_mcp, session=76bdc4e5-b95b-48ba-91ea-8e1007b260e9
+2026-01-12 14:30:08.592879: Logged prompt id=16, model=claude-opus-4-5-20251101, tokens=10+469
+2026-01-12 14:31:44.757063: Hook started
+2026-01-12 14:31:44.757245: Parsed JSON: cwd=/Users/eyalgoren/Code/p_69_branch_monkey_mcp, session=76bdc4e5-b95b-48ba-91ea-8e1007b260e9
+2026-01-12 14:31:44.781245: Logged prompt id=17, model=claude-opus-4-5-20251101, tokens=10+1031
+2026-01-12 14:35:54.877685: Hook started
+2026-01-12 14:35:54.878021: Parsed JSON: cwd=/Users/eyalgoren/Code/p_69_branch_monkey_mcp, session=76bdc4e5-b95b-48ba-91ea-8e1007b260e9
+2026-01-12 14:35:54.902159: Logged prompt id=18, model=claude-opus-4-5-20251101, tokens=10+670
+2026-01-12 14:43:11.048297: Hook started
+2026-01-12 14:43:11.048635: Parsed JSON: cwd=/Users/eyalgoren/Code/p_69_branch_monkey_mcp, session=76bdc4e5-b95b-48ba-91ea-8e1007b260e9
+2026-01-12 14:43:11.073867: Logged prompt id=19, model=claude-opus-4-5-20251101, tokens=10+486
+2026-01-12 14:43:43.851869: Hook started
+2026-01-12 14:43:43.852066: Parsed JSON: cwd=/Users/eyalgoren/Code/p_69_branch_monkey_mcp, session=76bdc4e5-b95b-48ba-91ea-8e1007b260e9
+2026-01-12 14:43:43.879075: Logged prompt id=20, model=claude-opus-4-5-20251101, tokens=10+221
+2026-01-12 14:45:00.421472: Hook started
+2026-01-12 14:45:00.421869: Parsed JSON: cwd=/Users/eyalgoren/Code/p_69_branch_monkey_mcp, session=76bdc4e5-b95b-48ba-91ea-8e1007b260e9
+2026-01-12 14:45:00.448538: Logged prompt id=21, model=claude-opus-4-5-20251101, tokens=10+4
+2026-01-12 15:25:26.239548: Hook started
+2026-01-12 15:25:26.239824: Parsed JSON: cwd=/Users/eyalgoren/Code/p_69_branch_monkey_mcp, session=76bdc4e5-b95b-48ba-91ea-8e1007b260e9
+2026-01-12 15:25:26.267573: Logged prompt id=22, model=claude-opus-4-5-20251101, tokens=10+3466
+2026-01-12 15:33:43.740643: Hook started
+2026-01-12 15:33:43.740837: Parsed JSON: cwd=/Users/eyalgoren/Code/p_69_branch_monkey_mcp, session=76bdc4e5-b95b-48ba-91ea-8e1007b260e9
+2026-01-12 15:33:43.767022: Logged prompt id=23, model=claude-opus-4-5-20251101, tokens=10+214
+2026-01-12 19:34:51.489180: Hook started
+2026-01-12 19:34:51.489375: Parsed JSON: cwd=/Users/eyalgoren/Code/p_69_branch_monkey_mcp, session=76bdc4e5-b95b-48ba-91ea-8e1007b260e9
+2026-01-12 19:34:51.516619: Logged prompt id=24, model=claude-opus-4-5-20251101, tokens=10+556
+2026-01-12 19:35:55.044182: Hook started
+2026-01-12 19:35:55.044433: Parsed JSON: cwd=/Users/eyalgoren/Code/p_69_branch_monkey_mcp, session=76bdc4e5-b95b-48ba-91ea-8e1007b260e9
+2026-01-12 19:35:55.076952: Logged prompt id=25, model=claude-opus-4-5-20251101, tokens=10+436
+2026-01-12 19:36:46.618397: Hook started
+2026-01-12 19:36:46.618592: Parsed JSON: cwd=/Users/eyalgoren/Code/p_69_branch_monkey_mcp, session=76bdc4e5-b95b-48ba-91ea-8e1007b260e9
+2026-01-12 19:36:46.639185: Logged prompt id=26, model=claude-opus-4-5-20251101, tokens=10+339
+2026-01-12 19:44:46.803016: Hook started
+2026-01-12 19:44:46.803478: Parsed JSON: cwd=/Users/eyalgoren/Code/p_69_branch_monkey_mcp, session=76bdc4e5-b95b-48ba-91ea-8e1007b260e9
+2026-01-12 19:44:46.837502: Logged prompt id=27, model=claude-opus-4-5-20251101, tokens=9329+882
