@@ -829,6 +829,341 @@ def api_status():
 
 
 # =============================================================================
+# Merge and Dev Server Endpoints
+# =============================================================================
+
+class MergeRequest(BaseModel):
+    task_number: int
+    branch: str
+    target_branch: Optional[str] = None
+
+
+class DevServerRequest(BaseModel):
+    task_id: Optional[str] = None
+    task_number: int
+
+
+# Track running dev servers
+_running_dev_servers: Dict[int, dict] = {}
+BASE_DEV_PORT = 6000
+
+
+def find_worktree_path(task_number: int) -> Optional[str]:
+    """Find the worktree path for a task number."""
+    work_dir = get_default_working_dir()
+    git_root = get_git_root(work_dir)
+    if not git_root:
+        return None
+
+    worktrees_dir = Path(git_root) / ".worktrees"
+    if not worktrees_dir.exists():
+        return None
+
+    # Find most recent worktree for this task
+    matching_dirs = []
+    for d in worktrees_dir.iterdir():
+        if d.is_dir() and d.name.startswith(f"task-{task_number}"):
+            matching_dirs.append(d)
+
+    if not matching_dirs:
+        return None
+
+    # Return the most recently modified one
+    matching_dirs.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+    return str(matching_dirs[0])
+
+
+@app.get("/api/local-claude/merge-preview")
+def merge_preview(task_number: int, branch: str):
+    """Get commit info for merge preview visualization."""
+    work_dir = get_default_working_dir()
+    git_root = get_git_root(work_dir)
+    if not git_root:
+        raise HTTPException(status_code=400, detail="Not in a git repository")
+
+    current_branch = get_current_branch(git_root)
+
+    def get_commits(ref: str, limit: int = 5) -> List[dict]:
+        """Get commits from a ref with details."""
+        try:
+            result = subprocess.run(
+                ["git", "log", ref, f"-{limit}", "--pretty=format:%H|%s|%an|%ar"],
+                cwd=git_root,
+                capture_output=True,
+                text=True
+            )
+            if result.returncode != 0:
+                return []
+
+            commits = []
+            for line in result.stdout.strip().split('\n'):
+                if not line:
+                    continue
+                parts = line.split('|', 3)
+                if len(parts) >= 4:
+                    commits.append({
+                        "hash": parts[0][:7],
+                        "message": parts[1][:50] + ('...' if len(parts[1]) > 50 else ''),
+                        "author": parts[2],
+                        "date": parts[3]
+                    })
+            return commits
+        except Exception:
+            return []
+
+    def get_unique_commits(feature_branch: str, base_branch: str) -> List[dict]:
+        """Get commits that are in feature but not in base."""
+        try:
+            result = subprocess.run(
+                ["git", "log", f"{base_branch}..{feature_branch}", "--pretty=format:%H|%s|%an|%ar"],
+                cwd=git_root,
+                capture_output=True,
+                text=True
+            )
+            if result.returncode != 0:
+                return []
+
+            commits = []
+            for line in result.stdout.strip().split('\n'):
+                if not line:
+                    continue
+                parts = line.split('|', 3)
+                if len(parts) >= 4:
+                    commits.append({
+                        "hash": parts[0][:7],
+                        "message": parts[1][:50] + ('...' if len(parts[1]) > 50 else ''),
+                        "author": parts[2],
+                        "date": parts[3]
+                    })
+            return commits
+        except Exception:
+            return []
+
+    feature_commits = get_unique_commits(branch, current_branch)
+    main_commits = get_commits(current_branch, 3)
+
+    return {
+        "target_branch": current_branch,
+        "source_branch": branch,
+        "feature_commits": feature_commits,
+        "main_commits": main_commits
+    }
+
+
+@app.post("/api/local-claude/merge")
+def merge_worktree_branch(request: MergeRequest):
+    """Merge a worktree branch into the target branch."""
+    if not request.branch:
+        raise HTTPException(status_code=400, detail="Branch name required")
+
+    work_dir = get_default_working_dir()
+    git_root = get_git_root(work_dir)
+    if not git_root:
+        raise HTTPException(status_code=400, detail="Not in a git repository")
+
+    original_branch = get_current_branch(git_root)
+    target = request.target_branch or original_branch
+
+    if request.target_branch and request.target_branch != original_branch:
+        checkout_result = subprocess.run(
+            ["git", "checkout", request.target_branch],
+            cwd=git_root,
+            capture_output=True,
+            text=True
+        )
+        if checkout_result.returncode != 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Failed to checkout {request.target_branch}: {checkout_result.stderr}"
+            )
+
+    # Find worktree and commit any uncommitted changes
+    worktree_path = find_worktree_path(request.task_number)
+    if worktree_path:
+        try:
+            status_result = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=worktree_path,
+                capture_output=True,
+                text=True
+            )
+
+            if status_result.stdout.strip():
+                subprocess.run(["git", "add", "-A"], cwd=worktree_path, check=True)
+                subprocess.run(
+                    ["git", "commit", "-m", f"Task #{request.task_number}: Agent changes"],
+                    cwd=worktree_path,
+                    capture_output=True
+                )
+        except Exception:
+            pass
+
+    # Merge the branch
+    try:
+        result = subprocess.run(
+            ["git", "merge", request.branch, "--no-edit"],
+            cwd=git_root,
+            capture_output=True,
+            text=True
+        )
+
+        if result.returncode != 0:
+            error_msg = result.stderr
+            if "CONFLICT" in error_msg or "Automatic merge failed" in error_msg:
+                subprocess.run(["git", "merge", "--abort"], cwd=git_root, capture_output=True)
+                raise HTTPException(
+                    status_code=409,
+                    detail="Merge conflict detected. Please resolve conflicts manually."
+                )
+            raise HTTPException(status_code=500, detail=error_msg)
+
+        return {
+            "success": True,
+            "message": f"Successfully merged {request.branch} into {target}",
+            "output": result.stdout,
+            "target_branch": target
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def is_port_in_use(port: int) -> bool:
+    """Check if a port is in use."""
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex(('localhost', port)) == 0
+
+
+def find_available_port(base_port: int) -> int:
+    """Find an available port starting from base."""
+    port = base_port
+    while is_port_in_use(port):
+        port += 1
+        if port > base_port + 100:
+            raise Exception("No available ports found")
+    return port
+
+
+@app.post("/api/local-claude/dev-server")
+async def start_dev_server(request: DevServerRequest):
+    """Start a dev server for a worktree."""
+    task_number = request.task_number
+
+    # Check if already running
+    if task_number in _running_dev_servers:
+        info = _running_dev_servers[task_number]
+        return {
+            "port": info["port"],
+            "url": f"http://localhost:{info['port']}",
+            "status": "already_running"
+        }
+
+    # Find worktree
+    worktree_path = find_worktree_path(task_number)
+    if not worktree_path:
+        raise HTTPException(status_code=404, detail=f"No worktree found for task {task_number}")
+
+    # Check for frontend directory
+    frontend_path = Path(worktree_path) / "frontend"
+    if not frontend_path.exists():
+        raise HTTPException(status_code=404, detail="No frontend directory in worktree")
+
+    # Check if node_modules exists, if not install
+    node_modules = frontend_path / "node_modules"
+    if not node_modules.exists():
+        print(f"[DevServer] Installing dependencies for task {task_number}...")
+        try:
+            subprocess.run(
+                ["npm", "install"],
+                cwd=str(frontend_path),
+                capture_output=True,
+                timeout=180,
+                check=True
+            )
+        except subprocess.TimeoutExpired:
+            raise HTTPException(status_code=500, detail="npm install timed out")
+        except subprocess.CalledProcessError as e:
+            raise HTTPException(status_code=500, detail=f"npm install failed: {e.stderr}")
+
+    # Find available port
+    port = find_available_port(BASE_DEV_PORT + task_number)
+
+    # Start the dev server
+    process = subprocess.Popen(
+        ["npm", "run", "dev", "--", "--port", str(port)],
+        cwd=str(frontend_path),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True
+    )
+
+    # Track it
+    _running_dev_servers[task_number] = {
+        "process": process,
+        "port": port,
+        "task_id": request.task_id,
+        "started_at": datetime.now().isoformat()
+    }
+
+    # Wait for server to start
+    await asyncio.sleep(3)
+
+    return {
+        "port": port,
+        "url": f"http://localhost:{port}",
+        "status": "started"
+    }
+
+
+@app.get("/api/local-claude/dev-server")
+def list_dev_servers():
+    """List running dev servers."""
+    servers = []
+    for task_number, info in _running_dev_servers.items():
+        servers.append({
+            "taskNumber": task_number,
+            "port": info["port"],
+            "url": f"http://localhost:{info['port']}",
+            "startedAt": info["started_at"]
+        })
+    return servers
+
+
+@app.delete("/api/local-claude/dev-server")
+def stop_dev_server(task_number: int):
+    """Stop a dev server."""
+    if task_number not in _running_dev_servers:
+        raise HTTPException(status_code=404, detail="Server not found")
+
+    info = _running_dev_servers[task_number]
+    try:
+        os.killpg(os.getpgid(info["process"].pid), signal.SIGTERM)
+    except Exception:
+        try:
+            info["process"].kill()
+        except Exception:
+            pass
+
+    del _running_dev_servers[task_number]
+    return {"status": "stopped"}
+
+
+@app.delete("/api/local-claude/worktree")
+def delete_worktree_endpoint(task_number: int, worktree_path: str):
+    """Delete a git worktree."""
+    try:
+        work_dir = get_default_working_dir()
+        git_root = get_git_root(work_dir) or work_dir
+        remove_worktree(git_root, worktree_path)
+        return {"success": True, "message": f"Worktree deleted: {worktree_path}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete worktree: {str(e)}")
+
+
+# =============================================================================
 # Server Runner
 # =============================================================================
 
