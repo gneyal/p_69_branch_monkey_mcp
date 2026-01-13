@@ -753,7 +753,7 @@ def monkey_task_work(task_id: int, workflow: str = "execute") -> str:
 3. Implement the changes
 4. Use `monkey_task_log` to record progress
 5. Commit and push changes
-6. Use `monkey_task_complete` to create PR and context"""
+6. Use `monkey_task_complete` with `worktree_path` to create PR and context"""
 
         return f"""# {workflow_badge} Working on Task {task_id}: {task.get('title', 'Unknown')}
 
@@ -785,19 +785,21 @@ def monkey_task_log(task_id: int, content: str, update_type: str = "progress") -
 def monkey_task_complete(
     task_id: int,
     summary: str,
+    worktree_path: str = None,
     files_changed: str = None,
     context_name: str = None
 ) -> str:
     """Mark a task as complete, create a PR using gh CLI, and link everything.
 
     This will:
-    1. Run 'gh pr create --fill' to create a GitHub PR
+    1. Run 'gh pr create --fill' to create a GitHub PR (from worktree directory)
     2. Mark the task as complete with the PR URL
     3. Create a linked context with the summary
 
     Args:
         task_id: The task number to complete
         summary: Summary of what was done
+        worktree_path: Path to the worktree directory (required for PR creation)
         files_changed: Comma-separated list of files that were modified (e.g., "src/foo.ts, src/bar.ts")
         context_name: Optional name for the context (defaults to task title)
     """
@@ -812,7 +814,8 @@ def monkey_task_complete(
                 ["gh", "pr", "create", "--fill"],
                 capture_output=True,
                 text=True,
-                timeout=60
+                timeout=60,
+                cwd=worktree_path if worktree_path else None
             )
             pr_output = pr_result.stdout + pr_result.stderr
 
