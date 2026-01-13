@@ -722,8 +722,8 @@ def monkey_task_work(task_id: int, workflow: str = "execute") -> str:
         return f"❌ Invalid workflow '{workflow}'. Must be one of: {', '.join(valid_workflows)}"
 
     try:
-        # Pass workflow to API
-        result = api_post(f"/api/tasks/{task_id}/work", {"workflow": workflow})
+        # Start working on task (workflow is guidance only, not stored)
+        result = api_post(f"/api/tasks/{task_id}/work")
         task = result.get("task", {})
 
         CURRENT_TASK_ID = task_id
