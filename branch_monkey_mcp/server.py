@@ -747,13 +747,13 @@ def monkey_task_work(task_id: int, workflow: str = "execute") -> str:
 4. Get user approval before implementing
 5. If approved, switch to execute workflow or create sub-tasks"""
         else:  # execute
-            next_steps = """**Next Steps (Execute Workflow):**
-1. Create a git worktree: `git worktree add .worktrees/task-{task_id} -b task/{task_id}-description`
-2. Work in the worktree directory (cd into it)
-3. Implement the changes
+            next_steps = f"""**Next Steps (Execute Workflow):**
+1. Create a git worktree: `git worktree add .worktrees/task-{task_id} -b task/{task_id}-short-description`
+2. cd into the worktree: `cd .worktrees/task-{task_id}`
+3. Implement the changes (you are now in an isolated branch)
 4. Use `monkey_task_log` to record progress
-5. Commit and push changes
-6. Use `monkey_task_complete` with `worktree_path` to create PR and context"""
+5. Commit and push: `git add . && git commit -m "..." && git push -u origin task/{task_id}-short-description`
+6. Use `monkey_task_complete(task_id={task_id}, summary="...", worktree_path=".worktrees/task-{task_id}")` to create PR"""
 
         return f"""# {workflow_badge} Working on Task {task_id}: {task.get('title', 'Unknown')}
 
