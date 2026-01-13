@@ -704,11 +704,26 @@ def monkey_task_delete(task_id: str) -> str:
 
 
 @mcp.tool()
-def monkey_task_work(task_id: int) -> str:
-    """Start working on a task. Sets status to in_progress and logs start."""
+def monkey_task_work(task_id: int, workflow: str = "execute") -> str:
+    """Start working on a task. Sets status to in_progress and logs start.
+
+    Args:
+        task_id: The task number to work on
+        workflow: Required workflow type:
+            - "ask": Quick question/research - answer directly, no code changes
+            - "plan": Design/architecture - create plan, get approval before implementing
+            - "execute": Implementation - create branch, code, PR, complete with context
+    """
     global CURRENT_TASK_ID, CURRENT_TASK_TITLE
+
+    # Validate workflow
+    valid_workflows = ["ask", "plan", "execute"]
+    if workflow not in valid_workflows:
+        return f"❌ Invalid workflow '{workflow}'. Must be one of: {', '.join(valid_workflows)}"
+
     try:
-        result = api_post(f"/api/tasks/{task_id}/work")
+        # Pass workflow to API
+        result = api_post(f"/api/tasks/{task_id}/work", {"workflow": workflow})
         task = result.get("task", {})
 
         CURRENT_TASK_ID = task_id
@@ -716,13 +731,37 @@ def monkey_task_work(task_id: int) -> str:
 
         auto_log_activity("task_work_start", duration=1)
 
-        return f"""# 🔧 Working on Task {task_id}: {task.get('title', 'Unknown')}
+        # Workflow-specific instructions
+        workflow_badge = {"ask": "🔍", "plan": "📋", "execute": "⚡"}[workflow]
 
+        if workflow == "ask":
+            next_steps = """**Next Steps (Ask Workflow):**
+1. Research/explore to answer the question
+2. Use `monkey_task_log` to record findings
+3. Use `monkey_task_update` to mark done when answered"""
+        elif workflow == "plan":
+            next_steps = """**Next Steps (Plan Workflow):**
+1. Research the codebase and requirements
+2. Create a plan/design document
+3. Use `monkey_task_log` to record the plan
+4. Get user approval before implementing
+5. If approved, switch to execute workflow or create sub-tasks"""
+        else:  # execute
+            next_steps = """**Next Steps (Execute Workflow):**
+1. Create a git branch: `git checkout -b task/{task_id}-description`
+2. Implement the changes
+3. Use `monkey_task_log` to record progress
+4. Commit and push changes
+5. Use `monkey_task_complete` to create PR and context"""
+
+        return f"""# {workflow_badge} Working on Task {task_id}: {task.get('title', 'Unknown')}
+
+**Workflow:** {workflow.upper()}
 **Status:** in_progress
 **Description:** {task.get('description') or '(none)'}
 **Version:** {task.get('version') or 'backlog'}
 
-Use `monkey_task_log` to record progress, `monkey_task_complete` when done."""
+{next_steps}"""
     except Exception as e:
         return f"Error: {str(e)}"
 
