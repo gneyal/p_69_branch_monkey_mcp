@@ -712,7 +712,7 @@ def monkey_task_work(task_id: int, workflow: str = "execute") -> str:
         workflow: Required workflow type:
             - "ask": Quick question/research - answer directly, no code changes
             - "plan": Design/architecture - create plan, get approval before implementing
-            - "execute": Implementation - create branch, code, PR, complete with context
+            - "execute": Implementation - create worktree, code, PR, complete with context
     """
     global CURRENT_TASK_ID, CURRENT_TASK_TITLE
 
@@ -748,11 +748,12 @@ def monkey_task_work(task_id: int, workflow: str = "execute") -> str:
 5. If approved, switch to execute workflow or create sub-tasks"""
         else:  # execute
             next_steps = """**Next Steps (Execute Workflow):**
-1. Create a git branch: `git checkout -b task/{task_id}-description`
-2. Implement the changes
-3. Use `monkey_task_log` to record progress
-4. Commit and push changes
-5. Use `monkey_task_complete` to create PR and context"""
+1. Create a git worktree: `git worktree add .worktrees/task-{task_id} -b task/{task_id}-description`
+2. Work in the worktree directory (cd into it)
+3. Implement the changes
+4. Use `monkey_task_log` to record progress
+5. Commit and push changes
+6. Use `monkey_task_complete` to create PR and context"""
 
         return f"""# {workflow_badge} Working on Task {task_id}: {task.get('title', 'Unknown')}
 
