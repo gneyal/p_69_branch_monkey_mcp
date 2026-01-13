@@ -838,6 +838,16 @@ class MergeRequest(BaseModel):
     target_branch: Optional[str] = None
 
 
+class UndoMergeRequest(BaseModel):
+    task_number: int
+    branch: str  # The branch that was merged (used to identify the merge commit)
+
+
+class MergeStatusRequest(BaseModel):
+    task_number: int
+    branch: str
+
+
 class DevServerRequest(BaseModel):
     task_id: Optional[str] = None
     task_number: int
@@ -1107,6 +1117,204 @@ def merge_worktree_branch(request: MergeRequest):
 
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/local-claude/undo-merge")
+def undo_merge(request: UndoMergeRequest):
+    """Undo the last merge by resetting to ORIG_HEAD.
+
+    This reverses a merge that hasn't been pushed yet.
+    Git stores the previous HEAD in ORIG_HEAD after a merge.
+    """
+    work_dir = get_default_working_dir()
+    git_root = get_git_root(work_dir)
+    if not git_root:
+        raise HTTPException(status_code=400, detail="Not in a git repository")
+
+    try:
+        # Check if ORIG_HEAD exists (it's set after a merge)
+        orig_head_check = subprocess.run(
+            ["git", "rev-parse", "ORIG_HEAD"],
+            cwd=git_root,
+            capture_output=True,
+            text=True
+        )
+
+        if orig_head_check.returncode != 0:
+            raise HTTPException(
+                status_code=400,
+                detail="No merge to undo. ORIG_HEAD not found (merge may have been pushed or reset)."
+            )
+
+        # Get current HEAD for the response
+        current_head = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=git_root,
+            capture_output=True,
+            text=True
+        ).stdout.strip()
+
+        orig_head = subprocess.run(
+            ["git", "rev-parse", "--short", "ORIG_HEAD"],
+            cwd=git_root,
+            capture_output=True,
+            text=True
+        ).stdout.strip()
+
+        # Check if this would affect pushed commits
+        # Get the tracking branch to compare
+        tracking_check = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+            cwd=git_root,
+            capture_output=True,
+            text=True
+        )
+
+        if tracking_check.returncode == 0:
+            # Has upstream tracking - check if current HEAD is ahead
+            upstream = tracking_check.stdout.strip()
+            ahead_check = subprocess.run(
+                ["git", "rev-list", f"{upstream}..HEAD", "--count"],
+                cwd=git_root,
+                capture_output=True,
+                text=True
+            )
+
+            ahead_count = int(ahead_check.stdout.strip()) if ahead_check.returncode == 0 else 0
+            if ahead_count == 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Cannot undo: merge has already been pushed to remote."
+                )
+
+        # Perform the reset to ORIG_HEAD
+        result = subprocess.run(
+            ["git", "reset", "--hard", "ORIG_HEAD"],
+            cwd=git_root,
+            capture_output=True,
+            text=True
+        )
+
+        if result.returncode != 0:
+            raise HTTPException(status_code=500, detail=f"Reset failed: {result.stderr}")
+
+        return {
+            "success": True,
+            "message": f"Merge undone. Reset from {current_head} to {orig_head}",
+            "previous_head": current_head,
+            "current_head": orig_head
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/local-claude/merge-status")
+def get_merge_status(task_number: int, branch: str):
+    """Get the merge status for a branch.
+
+    Returns information about whether the branch has been merged,
+    whether it can be undone, and the current git state.
+    """
+    work_dir = get_default_working_dir()
+    git_root = get_git_root(work_dir)
+    if not git_root:
+        raise HTTPException(status_code=400, detail="Not in a git repository")
+
+    try:
+        current_branch = get_current_branch(git_root)
+
+        # Check if branch is fully merged into current branch
+        merged_check = subprocess.run(
+            ["git", "branch", "--merged", current_branch],
+            cwd=git_root,
+            capture_output=True,
+            text=True
+        )
+
+        merged_branches = [b.strip().lstrip('* ') for b in merged_check.stdout.strip().split('\n') if b.strip()]
+        is_merged = branch in merged_branches
+
+        # Check if we can undo (ORIG_HEAD exists and points to pre-merge state)
+        can_undo = False
+        undo_info = None
+
+        orig_head_check = subprocess.run(
+            ["git", "rev-parse", "ORIG_HEAD"],
+            cwd=git_root,
+            capture_output=True,
+            text=True
+        )
+
+        if orig_head_check.returncode == 0:
+            # Check if ORIG_HEAD is in the feature branch history
+            # This helps verify the last operation was merging this branch
+            orig_head = orig_head_check.stdout.strip()
+
+            # Check if HEAD is ahead of upstream (not pushed yet)
+            tracking_check = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+                cwd=git_root,
+                capture_output=True,
+                text=True
+            )
+
+            if tracking_check.returncode == 0:
+                upstream = tracking_check.stdout.strip()
+                ahead_check = subprocess.run(
+                    ["git", "rev-list", f"{upstream}..HEAD", "--count"],
+                    cwd=git_root,
+                    capture_output=True,
+                    text=True
+                )
+                ahead_count = int(ahead_check.stdout.strip()) if ahead_check.returncode == 0 else 0
+                can_undo = ahead_count > 0
+            else:
+                # No upstream, so we can undo
+                can_undo = True
+
+            if can_undo:
+                undo_info = {
+                    "orig_head": orig_head[:7],
+                    "message": "Last merge can be undone"
+                }
+
+        # Get commit counts
+        if is_merged:
+            # Count how many commits from the branch are in current
+            commit_count_result = subprocess.run(
+                ["git", "rev-list", "--count", f"{current_branch}..{branch}"],
+                cwd=git_root,
+                capture_output=True,
+                text=True
+            )
+            commits_behind = int(commit_count_result.stdout.strip()) if commit_count_result.returncode == 0 else 0
+        else:
+            commits_behind = 0
+
+        # Get ahead count (commits in branch not in current)
+        ahead_result = subprocess.run(
+            ["git", "rev-list", "--count", f"{current_branch}..{branch}"],
+            cwd=git_root,
+            capture_output=True,
+            text=True
+        )
+        commits_ahead = int(ahead_result.stdout.strip()) if ahead_result.returncode == 0 else 0
+
+        return {
+            "branch": branch,
+            "target_branch": current_branch,
+            "is_merged": is_merged,
+            "can_undo": can_undo,
+            "undo_info": undo_info,
+            "commits_ahead": commits_ahead,
+            "status": "merged" if is_merged else ("ready" if commits_ahead > 0 else "up_to_date")
+        }
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
