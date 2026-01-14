@@ -732,8 +732,6 @@ def monkey_task_work(task_id: int, workflow: str = "execute") -> str:
         auto_log_activity("task_work_start", duration=1)
 
         # Workflow-specific instructions
-        workflow_badge = {"ask": "🔍", "plan": "📋", "execute": "⚡"}[workflow]
-
         if workflow == "ask":
             next_steps = """**Next Steps (Ask Workflow):**
 1. Research/explore to answer the question
@@ -771,7 +769,7 @@ git push -u origin task/{task_id}-short-description
 
 This creates a GitHub PR. The user reviews and merges it (NOT auto-merged)."""
 
-        return f"""# {workflow_badge} Working on Task {task_id}: {task.get('title', 'Unknown')}
+        return f"""# Working on Task {task_id}: {task.get('title', 'Unknown')}
 
 **Workflow:** {workflow.upper()}
 **Status:** in_progress
