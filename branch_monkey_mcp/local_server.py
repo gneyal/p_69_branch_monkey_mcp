@@ -18,6 +18,7 @@ import asyncio
 import json
 import os
 import pty
+import re
 import select
 import shutil
 import signal
@@ -1244,11 +1245,168 @@ def delete_worktree_endpoint(task_number: int, worktree_path: str):
         raise HTTPException(status_code=500, detail=f"Failed to delete worktree: {str(e)}")
 
 
+@app.get("/api/local-claude/worktrees")
+def list_worktrees():
+    """List all git worktrees in the repository with detailed info."""
+    try:
+        work_dir = get_default_working_dir()
+        git_root = get_git_root(work_dir)
+        if not git_root:
+            return {"worktrees": [], "error": "Not in a git repository"}
+
+        # Get worktree list
+        result = subprocess.run(
+            ["git", "worktree", "list", "--porcelain"],
+            cwd=git_root, capture_output=True, text=True
+        )
+
+        if result.returncode != 0:
+            return {"worktrees": [], "error": "Failed to list worktrees"}
+
+        worktrees = []
+        current_wt = {}
+
+        for line in result.stdout.strip().split('\n'):
+            if not line:
+                if current_wt:
+                    worktrees.append(current_wt)
+                    current_wt = {}
+                continue
+
+            if line.startswith('worktree '):
+                current_wt['path'] = line[9:]
+            elif line.startswith('HEAD '):
+                current_wt['head'] = line[5:]
+            elif line.startswith('branch '):
+                branch = line[7:]
+                if branch.startswith('refs/heads/'):
+                    branch = branch[11:]
+                current_wt['branch'] = branch
+            elif line == 'bare':
+                current_wt['bare'] = True
+            elif line == 'detached':
+                current_wt['detached'] = True
+
+        if current_wt:
+            worktrees.append(current_wt)
+
+        # Filter to only task worktrees
+        task_worktrees = [
+            wt for wt in worktrees
+            if '.worktrees' in wt.get('path', '') or wt.get('branch', '').startswith('task/')
+        ]
+
+        # Enrich each worktree with additional info
+        for wt in task_worktrees:
+            path = wt.get('path', '')
+            branch = wt.get('branch', '')
+
+            # Extract task number
+            task_number = None
+            match = re.search(r'task-(\d+)', path)
+            if match:
+                task_number = int(match.group(1))
+            elif branch:
+                match = re.search(r'task/(\d+)', branch)
+                if match:
+                    task_number = int(match.group(1))
+            wt['task_number'] = task_number
+            wt['is_main_repo'] = '.worktrees' not in path
+
+            # Get last commit info
+            if os.path.isdir(path):
+                try:
+                    commit_result = subprocess.run(
+                        ["git", "log", "-1", "--pretty=format:%h|%s|%ar"],
+                        cwd=path, capture_output=True, text=True
+                    )
+                    if commit_result.returncode == 0 and commit_result.stdout:
+                        parts = commit_result.stdout.split('|', 2)
+                        if len(parts) >= 3:
+                            wt['last_commit'] = {
+                                'hash': parts[0],
+                                'message': parts[1][:50] + ('...' if len(parts[1]) > 50 else ''),
+                                'date': parts[2]
+                            }
+
+                    # Check for uncommitted changes
+                    status_result = subprocess.run(
+                        ["git", "status", "--porcelain"],
+                        cwd=path, capture_output=True, text=True
+                    )
+                    wt['has_changes'] = bool(status_result.stdout.strip())
+
+                    # Check if merged to main
+                    if branch and not wt.get('is_main_repo'):
+                        merge_check = subprocess.run(
+                            ["git", "branch", "--merged", "main"],
+                            cwd=git_root, capture_output=True, text=True
+                        )
+                        merged_branches = [b.strip().lstrip('* ') for b in merge_check.stdout.strip().split('\n') if b.strip()]
+                        wt['merged_to_main'] = branch in merged_branches
+                except Exception:
+                    pass
+
+        return {
+            "worktrees": task_worktrees,
+            "total": len(task_worktrees),
+            "git_root": git_root
+        }
+    except Exception as e:
+        return {"worktrees": [], "error": str(e)}
+
+
+@app.get("/api/local-claude/commits")
+def list_commits(limit: int = 10, branch: Optional[str] = None):
+    """List recent commits for the current branch or specified branch."""
+    try:
+        work_dir = get_default_working_dir()
+        git_root = get_git_root(work_dir)
+        if not git_root:
+            return {"commits": [], "error": "Not in a git repository"}
+
+        current_branch = branch or get_current_branch(git_root)
+        if not current_branch:
+            return {"commits": [], "branch": None, "error": "Could not determine current branch"}
+
+        result = subprocess.run(
+            ["git", "log", current_branch, f"-{limit}", "--pretty=format:%H|%h|%s|%an|%ae|%ar|%ai"],
+            cwd=git_root, capture_output=True, text=True
+        )
+
+        if result.returncode != 0:
+            return {"commits": [], "branch": current_branch, "error": result.stderr}
+
+        commits = []
+        for line in result.stdout.strip().split('\n'):
+            if not line:
+                continue
+            parts = line.split('|', 6)
+            if len(parts) >= 7:
+                commits.append({
+                    "hash": parts[0],
+                    "short_hash": parts[1],
+                    "message": parts[2],
+                    "author": parts[3],
+                    "author_email": parts[4],
+                    "relative_date": parts[5],
+                    "date": parts[6]
+                })
+
+        return {
+            "commits": commits,
+            "branch": current_branch,
+            "total": len(commits)
+        }
+    except Exception as e:
+        return {"commits": [], "error": str(e)}
+
+
 # =============================================================================
 # Server Runner
 # =============================================================================
 
-def run_server(port: int = 8081, host: str = "127.0.0.1"):
+def run_server(port: int = 18081, host: str = "127.0.0.1"):
     """Run the FastAPI server."""
     import uvicorn
     print(f"\n[Server] Starting local agent server on http://{host}:{port}")
