@@ -5,6 +5,7 @@ This module provides a FastAPI server that handles local Claude Code agent opera
 When combined with the relay client, it allows cloud users to run agents on local machines.
 
 Routes:
+Agent Management:
 - POST /api/local-claude/agents - Create and start a new agent
 - GET /api/local-claude/agents - List all agents
 - GET /api/local-claude/agents/{id} - Get agent info
@@ -12,12 +13,35 @@ Routes:
 - POST /api/local-claude/agents/{id}/input - Send input to agent
 - GET /api/local-claude/agents/{id}/stream - SSE stream of agent output
 - GET /api/local-claude/check - Check if Claude CLI is installed
+
+Git & Merge Operations:
+- GET /api/local-claude/merge-preview - Get commit info for merge preview
+- GET /api/local-claude/diff - Get diff between branches
+- POST /api/local-claude/merge - Merge a branch into target
+- POST /api/local-claude/open-in-editor - Open worktree in VS Code
+
+Worktree Management:
+- GET /api/local-claude/worktrees - List all worktrees with task info
+- POST /api/local-claude/switch-worktree - Switch to a specific worktree
+- DELETE /api/local-claude/worktree - Delete a worktree
+
+Commit History Navigation:
+- GET /api/local-claude/commits - List commits with pagination
+- POST /api/local-claude/checkout-commit - Checkout a specific commit
+- POST /api/local-claude/checkout-branch - Checkout an existing branch
+- GET /api/local-claude/branches - List all branches
+
+Dev Server:
+- POST /api/local-claude/dev-server - Start a dev server
+- GET /api/local-claude/dev-server - List running dev servers
+- DELETE /api/local-claude/dev-server - Stop a dev server
 """
 
 import asyncio
 import json
 import os
 import pty
+import re
 import select
 import shutil
 import signal
@@ -1242,6 +1266,412 @@ def delete_worktree_endpoint(task_number: int, worktree_path: str):
         return {"success": True, "message": f"Worktree deleted: {worktree_path}"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to delete worktree: {str(e)}")
+
+
+# =============================================================================
+# Worktree Management Endpoints
+# =============================================================================
+
+@app.get("/api/local-claude/worktrees")
+def list_worktrees():
+    """List all git worktrees with task info."""
+    work_dir = get_default_working_dir()
+    git_root = get_git_root(work_dir)
+    if not git_root:
+        raise HTTPException(status_code=400, detail="Not in a git repository")
+
+    try:
+        # Get worktree list from git
+        result = subprocess.run(
+            ["git", "worktree", "list", "--porcelain"],
+            cwd=git_root,
+            capture_output=True,
+            text=True
+        )
+
+        if result.returncode != 0:
+            raise HTTPException(status_code=500, detail=f"Failed to list worktrees: {result.stderr}")
+
+        worktrees = []
+        current_worktree = {}
+
+        for line in result.stdout.strip().split('\n'):
+            if not line:
+                if current_worktree:
+                    worktrees.append(current_worktree)
+                    current_worktree = {}
+                continue
+
+            if line.startswith("worktree "):
+                current_worktree["path"] = line[9:]
+            elif line.startswith("HEAD "):
+                current_worktree["head"] = line[5:]
+            elif line.startswith("branch "):
+                current_worktree["branch"] = line[7:].replace("refs/heads/", "")
+            elif line == "bare":
+                current_worktree["bare"] = True
+            elif line == "detached":
+                current_worktree["detached"] = True
+
+        if current_worktree:
+            worktrees.append(current_worktree)
+
+        # Enrich with task info
+        enriched_worktrees = []
+        for wt in worktrees:
+            path = wt.get("path", "")
+            branch = wt.get("branch", "")
+
+            # Skip the main repo (not a worktree)
+            if path == git_root:
+                enriched_worktrees.append({
+                    "path": path,
+                    "branch": branch,
+                    "head": wt.get("head", "")[:7] if wt.get("head") else None,
+                    "is_main_repo": True,
+                    "task_number": None,
+                    "detached": wt.get("detached", False)
+                })
+                continue
+
+            # Extract task number from path or branch
+            task_number = None
+
+            # Try to extract from path (e.g., task-290-abc123)
+            path_match = re.search(r'task-(\d+)', path)
+            if path_match:
+                task_number = int(path_match.group(1))
+
+            # Or from branch (e.g., task/290-description)
+            if not task_number and branch:
+                branch_match = re.search(r'task/(\d+)', branch)
+                if branch_match:
+                    task_number = int(branch_match.group(1))
+
+            # Get last commit info
+            last_commit = None
+            try:
+                commit_result = subprocess.run(
+                    ["git", "log", "-1", "--pretty=format:%H|%s|%ar"],
+                    cwd=path,
+                    capture_output=True,
+                    text=True
+                )
+                if commit_result.returncode == 0 and commit_result.stdout:
+                    parts = commit_result.stdout.split('|', 2)
+                    if len(parts) >= 3:
+                        last_commit = {
+                            "hash": parts[0][:7],
+                            "message": parts[1][:50] + ('...' if len(parts[1]) > 50 else ''),
+                            "date": parts[2]
+                        }
+            except Exception:
+                pass
+
+            # Check for uncommitted changes
+            has_changes = False
+            try:
+                status_result = subprocess.run(
+                    ["git", "status", "--porcelain"],
+                    cwd=path,
+                    capture_output=True,
+                    text=True
+                )
+                has_changes = bool(status_result.stdout.strip())
+            except Exception:
+                pass
+
+            enriched_worktrees.append({
+                "path": path,
+                "branch": branch,
+                "head": wt.get("head", "")[:7] if wt.get("head") else None,
+                "is_main_repo": False,
+                "task_number": task_number,
+                "detached": wt.get("detached", False),
+                "last_commit": last_commit,
+                "has_changes": has_changes
+            })
+
+        return {"worktrees": enriched_worktrees, "git_root": git_root}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class SwitchWorktreeRequest(BaseModel):
+    worktree_path: str
+
+
+@app.post("/api/local-claude/switch-worktree")
+def switch_worktree(request: SwitchWorktreeRequest):
+    """Switch to a specific worktree by setting it as the default working directory."""
+    worktree_path = request.worktree_path
+
+    if not Path(worktree_path).exists():
+        raise HTTPException(status_code=404, detail=f"Worktree path does not exist: {worktree_path}")
+
+    if not is_git_repo(worktree_path):
+        raise HTTPException(status_code=400, detail="Path is not a git repository")
+
+    # Set this as the new default working directory
+    set_default_working_dir(worktree_path)
+
+    # Get branch info for the worktree
+    branch = get_current_branch(worktree_path)
+
+    return {
+        "success": True,
+        "message": f"Switched to worktree: {worktree_path}",
+        "worktree_path": worktree_path,
+        "branch": branch
+    }
+
+
+# =============================================================================
+# Commit History Navigation Endpoints
+# =============================================================================
+
+@app.get("/api/local-claude/commits")
+def list_commits(branch: Optional[str] = None, limit: int = 20, offset: int = 0):
+    """List commits for a branch with navigation support."""
+    work_dir = get_default_working_dir()
+    git_root = get_git_root(work_dir)
+    if not git_root:
+        raise HTTPException(status_code=400, detail="Not in a git repository")
+
+    target_branch = branch or get_current_branch(git_root)
+
+    try:
+        # Get total count first
+        count_result = subprocess.run(
+            ["git", "rev-list", "--count", target_branch],
+            cwd=git_root,
+            capture_output=True,
+            text=True
+        )
+        total_commits = int(count_result.stdout.strip()) if count_result.returncode == 0 else 0
+
+        # Get commits with pagination
+        result = subprocess.run(
+            ["git", "log", target_branch, f"--skip={offset}", f"-{limit}",
+             "--pretty=format:%H|%s|%an|%ae|%ar|%aI"],
+            cwd=git_root,
+            capture_output=True,
+            text=True
+        )
+
+        if result.returncode != 0:
+            raise HTTPException(status_code=500, detail=f"Failed to get commits: {result.stderr}")
+
+        commits = []
+        for line in result.stdout.strip().split('\n'):
+            if not line:
+                continue
+            parts = line.split('|', 5)
+            if len(parts) >= 6:
+                commits.append({
+                    "hash": parts[0],
+                    "short_hash": parts[0][:7],
+                    "message": parts[1],
+                    "author": parts[2],
+                    "author_email": parts[3],
+                    "relative_date": parts[4],
+                    "date": parts[5]
+                })
+
+        # Get current HEAD
+        head_result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=git_root,
+            capture_output=True,
+            text=True
+        )
+        current_head = head_result.stdout.strip() if head_result.returncode == 0 else None
+
+        return {
+            "commits": commits,
+            "branch": target_branch,
+            "total_commits": total_commits,
+            "offset": offset,
+            "limit": limit,
+            "has_more": offset + limit < total_commits,
+            "current_head": current_head
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class CheckoutCommitRequest(BaseModel):
+    commit_hash: str
+    create_branch: Optional[str] = None
+
+
+@app.post("/api/local-claude/checkout-commit")
+def checkout_commit(request: CheckoutCommitRequest):
+    """Checkout a specific commit (creates detached HEAD or new branch)."""
+    work_dir = get_default_working_dir()
+    git_root = get_git_root(work_dir)
+    if not git_root:
+        raise HTTPException(status_code=400, detail="Not in a git repository")
+
+    # Check for uncommitted changes first
+    status_result = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=git_root,
+        capture_output=True,
+        text=True
+    )
+
+    if status_result.stdout.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot checkout: uncommitted changes exist. Commit or stash your changes first."
+        )
+
+    try:
+        if request.create_branch:
+            # Create a new branch at the commit
+            result = subprocess.run(
+                ["git", "checkout", "-b", request.create_branch, request.commit_hash],
+                cwd=git_root,
+                capture_output=True,
+                text=True
+            )
+        else:
+            # Detached HEAD checkout
+            result = subprocess.run(
+                ["git", "checkout", request.commit_hash],
+                cwd=git_root,
+                capture_output=True,
+                text=True
+            )
+
+        if result.returncode != 0:
+            raise HTTPException(status_code=500, detail=f"Checkout failed: {result.stderr}")
+
+        # Get commit info
+        commit_info_result = subprocess.run(
+            ["git", "log", "-1", "--pretty=format:%H|%s|%ar"],
+            cwd=git_root,
+            capture_output=True,
+            text=True
+        )
+
+        commit_info = None
+        if commit_info_result.returncode == 0:
+            parts = commit_info_result.stdout.split('|', 2)
+            if len(parts) >= 3:
+                commit_info = {
+                    "hash": parts[0][:7],
+                    "message": parts[1],
+                    "date": parts[2]
+                }
+
+        return {
+            "success": True,
+            "commit_hash": request.commit_hash,
+            "new_branch": request.create_branch,
+            "detached": request.create_branch is None,
+            "commit_info": commit_info,
+            "message": f"Checked out commit {request.commit_hash[:7]}" +
+                       (f" on new branch {request.create_branch}" if request.create_branch else " (detached HEAD)")
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/local-claude/checkout-branch")
+def checkout_branch(branch: str):
+    """Checkout an existing branch."""
+    work_dir = get_default_working_dir()
+    git_root = get_git_root(work_dir)
+    if not git_root:
+        raise HTTPException(status_code=400, detail="Not in a git repository")
+
+    # Check for uncommitted changes first
+    status_result = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=git_root,
+        capture_output=True,
+        text=True
+    )
+
+    if status_result.stdout.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot checkout: uncommitted changes exist. Commit or stash your changes first."
+        )
+
+    try:
+        result = subprocess.run(
+            ["git", "checkout", branch],
+            cwd=git_root,
+            capture_output=True,
+            text=True
+        )
+
+        if result.returncode != 0:
+            raise HTTPException(status_code=500, detail=f"Checkout failed: {result.stderr}")
+
+        return {
+            "success": True,
+            "branch": branch,
+            "message": f"Checked out branch {branch}"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/local-claude/branches")
+def list_branches():
+    """List all local and remote branches."""
+    work_dir = get_default_working_dir()
+    git_root = get_git_root(work_dir)
+    if not git_root:
+        raise HTTPException(status_code=400, detail="Not in a git repository")
+
+    try:
+        # Get local branches
+        local_result = subprocess.run(
+            ["git", "branch", "--format=%(refname:short)|%(objectname:short)|%(upstream:short)"],
+            cwd=git_root,
+            capture_output=True,
+            text=True
+        )
+
+        local_branches = []
+        if local_result.returncode == 0:
+            for line in local_result.stdout.strip().split('\n'):
+                if not line:
+                    continue
+                parts = line.split('|')
+                local_branches.append({
+                    "name": parts[0],
+                    "head": parts[1] if len(parts) > 1 else None,
+                    "upstream": parts[2] if len(parts) > 2 and parts[2] else None
+                })
+
+        # Get current branch
+        current = get_current_branch(git_root)
+
+        return {
+            "branches": local_branches,
+            "current": current
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # =============================================================================
