@@ -1344,6 +1344,48 @@ def list_worktrees():
                         )
                         merged_branches = [b.strip().lstrip('* ') for b in merge_check.stdout.strip().split('\n') if b.strip()]
                         wt['merged_to_main'] = branch in merged_branches
+
+                        # If merged, get merge commit details
+                        if wt['merged_to_main']:
+                            # Find the merge commit on main that brought in this branch
+                            # Look for merge commits that reference this branch
+                            merge_commit_result = subprocess.run(
+                                ["git", "log", "main", "--merges", "--grep", branch, "-1", "--pretty=format:%h|%s|%an|%ar"],
+                                cwd=git_root, capture_output=True, text=True
+                            )
+                            if merge_commit_result.returncode == 0 and merge_commit_result.stdout.strip():
+                                mc_parts = merge_commit_result.stdout.strip().split('|', 3)
+                                if len(mc_parts) >= 4:
+                                    wt['merge_commit'] = {
+                                        'hash': mc_parts[0],
+                                        'message': mc_parts[1][:50] + ('...' if len(mc_parts[1]) > 50 else ''),
+                                        'author': mc_parts[2],
+                                        'date': mc_parts[3]
+                                    }
+                            else:
+                                # If no merge commit found (fast-forward merge), find where branch tip landed on main
+                                # Get the commit where branch was merged (the branch's HEAD commit on main)
+                                branch_tip = subprocess.run(
+                                    ["git", "rev-parse", "--short", branch],
+                                    cwd=git_root, capture_output=True, text=True
+                                )
+                                if branch_tip.returncode == 0:
+                                    tip_sha = branch_tip.stdout.strip()
+                                    # Get details of that commit
+                                    tip_info = subprocess.run(
+                                        ["git", "log", "-1", tip_sha, "--pretty=format:%h|%s|%an|%ar"],
+                                        cwd=git_root, capture_output=True, text=True
+                                    )
+                                    if tip_info.returncode == 0 and tip_info.stdout.strip():
+                                        tc_parts = tip_info.stdout.strip().split('|', 3)
+                                        if len(tc_parts) >= 4:
+                                            wt['merge_commit'] = {
+                                                'hash': tc_parts[0],
+                                                'message': tc_parts[1][:50] + ('...' if len(tc_parts[1]) > 50 else ''),
+                                                'author': tc_parts[2],
+                                                'date': tc_parts[3],
+                                                'fast_forward': True
+                                            }
                 except Exception:
                     pass
 
