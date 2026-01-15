@@ -84,55 +84,50 @@ This ensures that:
 - Multiple relay instances on the same machine get different IDs
 - The system can route requests to the correct machine
 
-### How the "Local" Button Maps to a Machine
+### How the "Local" Button Maps to a Computer
 
-When you click "Local" on a task card, the system determines which machine to use:
+**Important**: "Machines" in the API (`/api/machines`) are business automation processes, not physical computers. Local computers are tracked separately as **compute nodes** in the `compute_nodes` table.
 
-1. **Task has a pre-assigned machine** - If the task was created with `machine_id`, that specific machine is used
-2. **No pre-assigned machine** - The UI must prompt you to select from your connected machines
-3. **Only one machine connected** - That machine is used automatically
+When you click "Local" on a task card, the system routes the request to a compute node:
 
-Tasks can be assigned to a specific machine when created:
-```python
-monkey_task_create(title="...", machine_id="work-laptop-5678")
-```
+1. **Compute nodes are per-user** - Each user's connected computers are tracked by `user_id`
+2. **Currently: first available** - The system uses the user's connected compute node (if multiple are online, behavior depends on frontend implementation)
+3. **Future: explicit selection** - The UI could show a dropdown to select which computer to use
 
-Or updated later:
-```python
-monkey_task_update(task_id="123", machine_id="home-pc-9012")
-```
+**Note**: The task's `machine_id` field refers to business process machines, NOT local computers.
 
 ### Multiple Computers as "Local"
 
-If you have multiple computers signed in:
+If you have multiple computers signed in as the same user:
 
-1. **Each appears separately** - The cloud UI shows a list of all connected machines with their names and status
-2. **Task-level assignment** - Each task can optionally be assigned to a specific machine
-3. **Requests go to specific machines** - Each request is routed to the chosen machine via its unique channel
-4. **Status tracking** - Heartbeats every 25 seconds keep connection status current
+1. **Each registers as a compute node** - Stored in `compute_nodes` table with unique `machine_id` (hostname-pid)
+2. **Same Supabase channel prefix** - But each has a unique channel: `relay:{user_id}:{machine_id}`
+3. **Routing requires machine_id** - The cloud must specify which compute node to send requests to
+4. **Status tracking** - Heartbeats every 25 seconds update `last_heartbeat` and `status`
 
-### What You See in the UI
+### Compute Node Data
 
-For each connected machine, the system tracks:
-- Machine name (hostname)
-- Machine ID (hostname-pid)
-- Connection time
-- Last heartbeat (online status)
-- Active capabilities
+Each connected computer is tracked with:
+- `machine_id`: Unique identifier (hostname-pid)
+- `user_id`: The authenticated user
+- `name`: Machine hostname
+- `node_type`: "local"
+- `status`: "online" or "offline"
+- `last_heartbeat`: Timestamp of last heartbeat
+- `capabilities`: e.g., `{"claude": true}`
 
 ### Connection Behavior
 
-- **Same machine, same ID reconnects**: The new connection replaces the old one (any pending requests are cancelled)
-- **Same machine, different process**: Creates a new entry (useful for running multiple instances)
-- **Machine goes offline**: Marked as offline when heartbeats stop
+- **Same machine_id reconnects**: Upserts (updates existing row)
+- **Different process on same host**: Creates new entry (different PID = different machine_id)
+- **Machine goes offline**: Status updated to "offline" on graceful shutdown
 
-### Example Scenario
+### Current Limitation
 
-You have two computers:
-- Work laptop (`work-laptop-5678`) - connected from office
-- Home desktop (`home-pc-9012`) - connected from home
-
-Both appear in the cloud UI. When you click "Local" to run a task, you choose which machine should execute it. The request is sent specifically to that machine's channel.
+The frontend needs to handle the case where a user has multiple computers connected. Options:
+1. Show a compute node selector before running on "Local"
+2. Default to most recently active compute node
+3. Allow users to set a "primary" compute node
 
 ## Troubleshooting
 
