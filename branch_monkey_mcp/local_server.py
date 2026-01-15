@@ -855,7 +855,11 @@ BASE_DEV_PORT = 6000
 
 
 def find_worktree_path(task_number: int) -> Optional[str]:
-    """Find the worktree path for a task number."""
+    """Find the worktree path for a task number.
+
+    Uses trailing dash in prefix matching to avoid false matches
+    (e.g., task-29 should not match task-290).
+    """
     work_dir = get_default_working_dir()
     git_root = get_git_root(work_dir)
     if not git_root:
@@ -866,9 +870,11 @@ def find_worktree_path(task_number: int) -> Optional[str]:
         return None
 
     # Find most recent worktree for this task
+    # Use "task-{number}-" prefix to avoid matching wrong tasks (task-29 != task-290)
     matching_dirs = []
+    prefix = f"task-{task_number}-"
     for d in worktrees_dir.iterdir():
-        if d.is_dir() and d.name.startswith(f"task-{task_number}"):
+        if d.is_dir() and d.name.startswith(prefix):
             matching_dirs.append(d)
 
     if not matching_dirs:
@@ -877,6 +883,51 @@ def find_worktree_path(task_number: int) -> Optional[str]:
     # Return the most recently modified one
     matching_dirs.sort(key=lambda x: x.stat().st_mtime, reverse=True)
     return str(matching_dirs[0])
+
+
+def find_actual_branch(task_number: int) -> Optional[str]:
+    """Find the actual branch for a task by checking the worktree or git branches.
+
+    This handles cases where the stored branch name doesn't match the actual branch
+    (e.g., branch was created with a different naming convention).
+    """
+    # First, try to get branch from worktree
+    worktree_path = find_worktree_path(task_number)
+    if worktree_path:
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                cwd=worktree_path,
+                capture_output=True,
+                text=True
+            )
+            if result.returncode == 0:
+                branch_name = result.stdout.strip()
+                if branch_name and branch_name != "HEAD":
+                    return branch_name
+        except Exception:
+            pass
+
+    # Fallback: search git branches by pattern
+    work_dir = get_default_working_dir()
+    git_root = get_git_root(work_dir)
+    if git_root:
+        try:
+            result = subprocess.run(
+                ["git", "branch", "-a", "--list", f"*task/{task_number}-*"],
+                cwd=git_root,
+                capture_output=True,
+                text=True
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                lines = [b.strip().lstrip("* ") for b in result.stdout.strip().split("\n")]
+                local_branch = next((b for b in lines if not b.startswith("remotes/")), None)
+                if local_branch:
+                    return local_branch
+        except Exception:
+            pass
+
+    return None
 
 
 @app.get("/api/local-claude/merge-preview")
@@ -1059,6 +1110,29 @@ def merge_worktree_branch(request: MergeRequest):
                 detail=f"Failed to checkout {request.target_branch}: {checkout_result.stderr}"
             )
 
+    # Determine the actual branch to merge
+    branch_to_merge = request.branch
+
+    # Check if the provided branch exists
+    check_result = subprocess.run(
+        ["git", "rev-parse", "--verify", request.branch],
+        cwd=git_root,
+        capture_output=True,
+        text=True
+    )
+    if check_result.returncode != 0:
+        # Branch doesn't exist - try to find the actual branch by task number
+        print(f"[Merge] Branch {request.branch} not found, searching for actual branch...")
+        actual_branch = find_actual_branch(request.task_number)
+        if actual_branch:
+            print(f"[Merge] Found actual branch: {actual_branch}")
+            branch_to_merge = actual_branch
+        else:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Branch {request.branch} not found and could not find an alternative branch for task {request.task_number}"
+            )
+
     # Find worktree and commit any uncommitted changes
     worktree_path = find_worktree_path(request.task_number)
     if worktree_path:
@@ -1083,7 +1157,7 @@ def merge_worktree_branch(request: MergeRequest):
     # Merge the branch
     try:
         result = subprocess.run(
-            ["git", "merge", request.branch, "--no-edit"],
+            ["git", "merge", branch_to_merge, "--no-edit"],
             cwd=git_root,
             capture_output=True,
             text=True
@@ -1101,9 +1175,10 @@ def merge_worktree_branch(request: MergeRequest):
 
         return {
             "success": True,
-            "message": f"Successfully merged {request.branch} into {target}",
+            "message": f"Successfully merged {branch_to_merge} into {target}",
             "output": result.stdout,
-            "target_branch": target
+            "target_branch": target,
+            "actual_branch": branch_to_merge if branch_to_merge != request.branch else None
         }
 
     except HTTPException:
