@@ -1357,8 +1357,8 @@ def list_worktrees():
 
 
 @app.get("/api/local-claude/commits")
-def list_commits(limit: int = 10, branch: Optional[str] = None):
-    """List recent commits for the current branch or specified branch."""
+def list_commits(limit: int = 10, branch: Optional[str] = None, all_branches: bool = False):
+    """List recent commits for the current branch, specified branch, or all branches."""
     try:
         work_dir = get_default_working_dir()
         git_root = get_git_root(work_dir)
@@ -1366,11 +1366,16 @@ def list_commits(limit: int = 10, branch: Optional[str] = None):
             return {"commits": [], "error": "Not in a git repository"}
 
         current_branch = branch or get_current_branch(git_root)
-        if not current_branch:
-            return {"commits": [], "branch": None, "error": "Could not determine current branch"}
+
+        # Use git log --graph to get accurate branch visualization
+        # Format: GRAPH_CHARS COMMIT_MARKER hash|short_hash|parents|subject|author|email|relative_date|date|refs
+        if all_branches or (not branch):
+            cmd = ["git", "log", "--all", "--graph", f"-{limit}", "--pretty=format:COMMIT_MARKER%H|%h|%P|%s|%an|%ae|%ar|%ai|%D"]
+        else:
+            cmd = ["git", "log", current_branch, "--graph", f"-{limit}", "--pretty=format:COMMIT_MARKER%H|%h|%P|%s|%an|%ae|%ar|%ai|%D"]
 
         result = subprocess.run(
-            ["git", "log", current_branch, f"-{limit}", "--pretty=format:%H|%h|%s|%an|%ae|%ar|%ai"],
+            cmd,
             cwd=git_root, capture_output=True, text=True
         )
 
@@ -1378,19 +1383,41 @@ def list_commits(limit: int = 10, branch: Optional[str] = None):
             return {"commits": [], "branch": current_branch, "error": result.stderr}
 
         commits = []
-        for line in result.stdout.strip().split('\n'):
-            if not line:
+        for line in result.stdout.split('\n'):
+            if 'COMMIT_MARKER' not in line:
                 continue
-            parts = line.split('|', 6)
-            if len(parts) >= 7:
+
+            # Split into graph part and commit part
+            marker_idx = line.index('COMMIT_MARKER')
+            graph_part = line[:marker_idx]
+            commit_part = line[marker_idx + len('COMMIT_MARKER'):]
+
+            # Parse graph characters to determine lane
+            # Count position of * (commit marker) in graph
+            # Each | or space before * represents a lane
+            lane = 0
+            for i, char in enumerate(graph_part):
+                if char == '*':
+                    # Lane is roughly i/2 since graph uses "| " pattern
+                    lane = i // 2
+                    break
+
+            parts = commit_part.split('|', 8)
+            if len(parts) >= 8:
+                refs = parts[8] if len(parts) > 8 else ""
+                parent_hashes = parts[2].split() if parts[2] else []
                 commits.append({
                     "hash": parts[0],
                     "short_hash": parts[1],
-                    "message": parts[2],
-                    "author": parts[3],
-                    "author_email": parts[4],
-                    "relative_date": parts[5],
-                    "date": parts[6]
+                    "parents": parent_hashes,
+                    "message": parts[3],
+                    "author": parts[4],
+                    "author_email": parts[5],
+                    "relative_date": parts[6],
+                    "date": parts[7],
+                    "refs": refs,
+                    "lane": lane,  # Lane from git's own graph
+                    "graph": graph_part.rstrip()  # Raw graph characters for reference
                 })
 
         return {
@@ -1400,6 +1427,254 @@ def list_commits(limit: int = 10, branch: Optional[str] = None):
         }
     except Exception as e:
         return {"commits": [], "error": str(e)}
+
+
+# =============================================================================
+# Time Machine - Visual Git History with Preview
+# =============================================================================
+
+# Track running time machine previews
+_time_machine_previews: Dict[str, dict] = {}
+TIME_MACHINE_BASE_PORT = 6100
+
+
+@app.get("/api/local-claude/commit-diff/{sha}")
+def get_commit_diff(sha: str):
+    """Get detailed diff for a specific commit."""
+    try:
+        work_dir = get_default_working_dir()
+        git_root = get_git_root(work_dir)
+        if not git_root:
+            raise HTTPException(status_code=404, detail="Not in a git repository")
+
+        # Get commit info
+        info_result = subprocess.run(
+            ["git", "show", "--no-patch", "--format=%H|%s|%an|%ae|%ai|%P", sha],
+            cwd=git_root, capture_output=True, text=True
+        )
+        if info_result.returncode != 0:
+            raise HTTPException(status_code=404, detail=f"Commit not found: {sha}")
+
+        parts = info_result.stdout.strip().split('|', 5)
+        if len(parts) < 5:
+            raise HTTPException(status_code=500, detail="Failed to parse commit info")
+
+        full_sha = parts[0]
+        message = parts[1]
+        author = parts[2]
+        author_email = parts[3]
+        date = parts[4]
+        parent_sha = parts[5] if len(parts) > 5 else None
+
+        # Get file stats
+        stat_result = subprocess.run(
+            ["git", "show", "--stat", "--format=", sha],
+            cwd=git_root, capture_output=True, text=True
+        )
+
+        files = []
+        if stat_result.returncode == 0:
+            for line in stat_result.stdout.strip().split('\n'):
+                if '|' in line and ('+' in line or '-' in line):
+                    # Parse: " filename | 10 +++---"
+                    file_part = line.split('|')[0].strip()
+                    stats_part = line.split('|')[1] if '|' in line else ""
+                    insertions = stats_part.count('+')
+                    deletions = stats_part.count('-')
+                    files.append({
+                        "path": file_part,
+                        "insertions": insertions,
+                        "deletions": deletions
+                    })
+
+        # Get full diff
+        diff_result = subprocess.run(
+            ["git", "show", "--format=", sha],
+            cwd=git_root, capture_output=True, text=True
+        )
+        diff = diff_result.stdout if diff_result.returncode == 0 else ""
+
+        return {
+            "sha": sha,
+            "full_sha": full_sha,
+            "message": message,
+            "author": author,
+            "author_email": author_email,
+            "date": date,
+            "parent_sha": parent_sha,
+            "files": files,
+            "diff": diff
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class TimeMachinePreviewRequest(BaseModel):
+    commit_sha: str
+
+
+@app.post("/api/local-claude/time-machine/preview")
+async def create_time_machine_preview(request: TimeMachinePreviewRequest):
+    """Create a temporary worktree at a commit and start dev server."""
+    commit_sha = request.commit_sha
+    short_sha = commit_sha[:7]
+
+    # Check if already running
+    if short_sha in _time_machine_previews:
+        info = _time_machine_previews[short_sha]
+        return {
+            "status": "already_running",
+            "port": info["port"],
+            "url": f"http://localhost:{info['port']}",
+            "worktree_path": info["worktree_path"]
+        }
+
+    try:
+        work_dir = get_default_working_dir()
+        git_root = get_git_root(work_dir)
+        if not git_root:
+            raise HTTPException(status_code=404, detail="Not in a git repository")
+
+        # Verify commit exists
+        verify_result = subprocess.run(
+            ["git", "cat-file", "-t", commit_sha],
+            cwd=git_root, capture_output=True, text=True
+        )
+        if verify_result.returncode != 0:
+            raise HTTPException(status_code=404, detail=f"Commit not found: {commit_sha}")
+
+        # Create worktree directory
+        worktrees_dir = Path(git_root) / ".worktrees"
+        worktrees_dir.mkdir(exist_ok=True)
+
+        worktree_name = f"timemachine-{short_sha}"
+        worktree_path = worktrees_dir / worktree_name
+
+        # Remove existing if present
+        if worktree_path.exists():
+            subprocess.run(
+                ["git", "worktree", "remove", "--force", str(worktree_path)],
+                cwd=git_root, capture_output=True
+            )
+
+        # Create worktree at specific commit (detached HEAD)
+        create_result = subprocess.run(
+            ["git", "worktree", "add", "--detach", str(worktree_path), commit_sha],
+            cwd=git_root, capture_output=True, text=True
+        )
+        if create_result.returncode != 0:
+            raise HTTPException(status_code=500, detail=f"Failed to create worktree: {create_result.stderr}")
+
+        # Check for frontend directory
+        frontend_path = worktree_path / "frontend"
+        if not frontend_path.exists():
+            # Cleanup and error
+            subprocess.run(["git", "worktree", "remove", "--force", str(worktree_path)], cwd=git_root, capture_output=True)
+            raise HTTPException(status_code=404, detail="No frontend directory in this commit")
+
+        # Install dependencies if needed
+        node_modules = frontend_path / "node_modules"
+        if not node_modules.exists():
+            print(f"[TimeMachine] Installing dependencies for {short_sha}...")
+            install_result = subprocess.run(
+                ["npm", "install"],
+                cwd=str(frontend_path),
+                capture_output=True,
+                timeout=180
+            )
+            if install_result.returncode != 0:
+                subprocess.run(["git", "worktree", "remove", "--force", str(worktree_path)], cwd=git_root, capture_output=True)
+                raise HTTPException(status_code=500, detail="npm install failed")
+
+        # Find available port
+        port = TIME_MACHINE_BASE_PORT + len(_time_machine_previews)
+
+        # Start dev server
+        print(f"[TimeMachine] Starting dev server for {short_sha} on port {port}...")
+        process = subprocess.Popen(
+            ["npm", "run", "dev", "--", "--port", str(port)],
+            cwd=str(frontend_path),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True
+        )
+
+        # Track it
+        _time_machine_previews[short_sha] = {
+            "process": process,
+            "port": port,
+            "worktree_path": str(worktree_path),
+            "commit_sha": commit_sha,
+            "started_at": datetime.now().isoformat()
+        }
+
+        # Wait for server to start
+        await asyncio.sleep(3)
+
+        return {
+            "status": "started",
+            "port": port,
+            "url": f"http://localhost:{port}",
+            "worktree_path": str(worktree_path),
+            "commit_sha": commit_sha
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/local-claude/time-machine/preview/{sha}")
+def delete_time_machine_preview(sha: str):
+    """Stop dev server and cleanup worktree."""
+    short_sha = sha[:7]
+
+    if short_sha not in _time_machine_previews:
+        raise HTTPException(status_code=404, detail="Preview not found")
+
+    info = _time_machine_previews[short_sha]
+
+    # Stop dev server
+    try:
+        os.killpg(os.getpgid(info["process"].pid), signal.SIGTERM)
+    except Exception:
+        try:
+            info["process"].kill()
+        except Exception:
+            pass
+
+    # Remove worktree
+    try:
+        work_dir = get_default_working_dir()
+        git_root = get_git_root(work_dir)
+        if git_root:
+            subprocess.run(
+                ["git", "worktree", "remove", "--force", info["worktree_path"]],
+                cwd=git_root, capture_output=True
+            )
+    except Exception as e:
+        print(f"[TimeMachine] Warning: Failed to remove worktree: {e}")
+
+    del _time_machine_previews[short_sha]
+    return {"status": "stopped", "message": "Preview stopped and worktree cleaned up"}
+
+
+@app.get("/api/local-claude/time-machine/previews")
+def list_time_machine_previews():
+    """List active time machine previews."""
+    previews = []
+    for sha, info in _time_machine_previews.items():
+        previews.append({
+            "sha": sha,
+            "commit_sha": info["commit_sha"],
+            "port": info["port"],
+            "url": f"http://localhost:{info['port']}",
+            "worktree_path": info["worktree_path"],
+            "started_at": info["started_at"]
+        })
+    return {"previews": previews}
 
 
 # =============================================================================
