@@ -84,13 +84,31 @@ This ensures that:
 - Multiple relay instances on the same machine get different IDs
 - The system can route requests to the correct machine
 
+### How the "Local" Button Maps to a Machine
+
+When you click "Local" on a task card, the system determines which machine to use:
+
+1. **Task has a pre-assigned machine** - If the task was created with `machine_id`, that specific machine is used
+2. **No pre-assigned machine** - The UI must prompt you to select from your connected machines
+3. **Only one machine connected** - That machine is used automatically
+
+Tasks can be assigned to a specific machine when created:
+```python
+monkey_task_create(title="...", machine_id="work-laptop-5678")
+```
+
+Or updated later:
+```python
+monkey_task_update(task_id="123", machine_id="home-pc-9012")
+```
+
 ### Multiple Computers as "Local"
 
 If you have multiple computers signed in:
 
 1. **Each appears separately** - The cloud UI shows a list of all connected machines with their names and status
-2. **You choose which to use** - When clicking "Local", you select from your connected machines
-3. **Requests go to specific machines** - Each request is routed to your chosen machine via its unique channel
+2. **Task-level assignment** - Each task can optionally be assigned to a specific machine
+3. **Requests go to specific machines** - Each request is routed to the chosen machine via its unique channel
 4. **Status tracking** - Heartbeats every 25 seconds keep connection status current
 
 ### What You See in the UI
