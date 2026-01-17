@@ -52,7 +52,7 @@ class RelayClient:
     def __init__(
         self,
         cloud_url: str = DEFAULT_CLOUD_URL,
-        local_port: int = 8081,
+        local_port: int = 18081,
         machine_name: Optional[str] = None
     ):
         self.cloud_url = cloud_url.rstrip("/")
@@ -417,7 +417,7 @@ class RelayClient:
 
 def run_relay_client(
     cloud_url: str = DEFAULT_CLOUD_URL,
-    local_port: int = 8081,
+    local_port: int = 18081,
     machine_name: Optional[str] = None
 ):
     """
@@ -442,7 +442,7 @@ def run_relay_client(
 
 async def start_relay_client_async(
     cloud_url: str = DEFAULT_CLOUD_URL,
-    local_port: int = 8081,
+    local_port: int = 18081,
     machine_name: Optional[str] = None
 ) -> RelayClient:
     """
@@ -461,7 +461,7 @@ async def start_relay_client_async(
     return client
 
 
-def start_server_in_background(port: int = 8081, working_dir: Optional[str] = None):
+def start_server_in_background(port: int = 18081, working_dir: Optional[str] = None):
     """Start the local agent server in a background thread."""
     import threading
 
@@ -477,6 +477,64 @@ def start_server_in_background(port: int = 8081, working_dir: Optional[str] = No
     if working_dir:
         print(f"[Relay] Working directory: {working_dir}")
     return thread
+
+
+def setup_mcp_config(working_dir: str, cloud_url: str = DEFAULT_CLOUD_URL) -> bool:
+    """
+    Set up MCP config in the project's .mcp.json file.
+    Returns True if config was created or updated.
+    """
+    mcp_file = Path(working_dir) / ".mcp.json"
+
+    # The MCP server config to add
+    mcp_server_config = {
+        "command": "uvx",
+        "args": ["--from", "git+https://github.com/gneyal/p_69_branch_monkey_mcp.git", "branch-monkey-mcp"],
+        "env": {
+            "BRANCH_MONKEY_API_URL": cloud_url
+        }
+    }
+
+    try:
+        if mcp_file.exists():
+            # Read existing config
+            with open(mcp_file, "r") as f:
+                config = json.load(f)
+
+            # Ensure mcpServers exists
+            if "mcpServers" not in config:
+                config["mcpServers"] = {}
+
+            # Check if already configured
+            if "branch-monkey-cloud" in config["mcpServers"]:
+                print(f"[MCP] Config already exists in {mcp_file}")
+                return False
+
+            # Add our config
+            config["mcpServers"]["branch-monkey-cloud"] = mcp_server_config
+
+            with open(mcp_file, "w") as f:
+                json.dump(config, f, indent=2)
+
+            print(f"[MCP] Added branch-monkey-cloud to {mcp_file}")
+            return True
+        else:
+            # Create new config
+            config = {
+                "mcpServers": {
+                    "branch-monkey-cloud": mcp_server_config
+                }
+            }
+
+            with open(mcp_file, "w") as f:
+                json.dump(config, f, indent=2)
+
+            print(f"[MCP] Created {mcp_file} with branch-monkey-cloud config")
+            return True
+
+    except Exception as e:
+        print(f"[MCP] Warning: Could not set up MCP config: {e}")
+        return False
 
 
 def main():
@@ -497,8 +555,8 @@ def main():
     parser.add_argument(
         "--port",
         type=int,
-        default=int(os.environ.get("BRANCH_MONKEY_LOCAL_PORT", "8081")),
-        help="Local server port (default: 8081)"
+        default=int(os.environ.get("BRANCH_MONKEY_LOCAL_PORT", "18081")),
+        help="Local server port (default: 18081)"
     )
     parser.add_argument(
         "--name",
@@ -511,6 +569,11 @@ def main():
         help="Skip starting local server (use if server is running separately)"
     )
     parser.add_argument(
+        "--no-mcp",
+        action="store_true",
+        help="Skip setting up MCP config in .mcp.json"
+    )
+    parser.add_argument(
         "--dir", "-d",
         default=os.getcwd(),
         help="Working directory for agent execution (default: current directory)"
@@ -520,6 +583,10 @@ def main():
 
     # Resolve working directory to absolute path
     working_dir = os.path.abspath(args.dir)
+
+    # Set up MCP config unless --no-mcp is specified
+    if not args.no_mcp:
+        setup_mcp_config(working_dir, args.cloud_url)
 
     print(f"\n🐵 Branch Monkey Relay")
     print(f"   Cloud: {args.cloud_url}")
