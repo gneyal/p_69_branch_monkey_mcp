@@ -369,11 +369,27 @@ def create_worktree(repo_dir: str, branch: str, task_number: int, run_id: str) -
         with open(settings_file, "w") as f:
             json.dump(settings, f, indent=2)
 
+        # Copy .env files from main repo to worktree (they're gitignored)
+        copied_envs = []
+        for env_pattern in [".env", ".env.local", ".env.development", ".env.development.local"]:
+            # Check common locations: root, frontend/, src/
+            for subdir in ["", "frontend", "src"]:
+                src_env = Path(git_root) / subdir / env_pattern if subdir else Path(git_root) / env_pattern
+                if src_env.exists():
+                    dst_env = worktree_path / subdir / env_pattern if subdir else worktree_path / env_pattern
+                    dst_env.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src_env, dst_env)
+                    copied_envs.append(str(dst_env.relative_to(worktree_path)))
+
+        if copied_envs:
+            print(f"[Worktree] Copied env files: {copied_envs}")
+
         return {
             "success": True,
             "worktree_path": str(worktree_path),
             "message": f"Created worktree with {'new' if branch_created else 'existing'} branch: {branch}",
-            "branch_created": branch_created
+            "branch_created": branch_created,
+            "copied_env_files": copied_envs
         }
 
     except Exception as e:
