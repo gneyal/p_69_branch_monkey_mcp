@@ -842,6 +842,7 @@ class MergeRequest(BaseModel):
 class DevServerRequest(BaseModel):
     task_id: Optional[str] = None
     task_number: int
+    dev_script: Optional[str] = None  # Custom script, e.g. "cd frontend && npm run dev --port {port}"
 
 
 class OpenInEditorRequest(BaseModel):
@@ -1208,6 +1209,7 @@ def find_available_port(base_port: int) -> int:
 async def start_dev_server(request: DevServerRequest):
     """Start a dev server for a worktree."""
     task_number = request.task_number
+    dev_script = request.dev_script
 
     # Check if already running
     if task_number in _running_dev_servers:
@@ -1223,39 +1225,54 @@ async def start_dev_server(request: DevServerRequest):
     if not worktree_path:
         raise HTTPException(status_code=404, detail=f"No worktree found for task {task_number}")
 
-    # Check for frontend directory
-    frontend_path = Path(worktree_path) / "frontend"
-    if not frontend_path.exists():
-        raise HTTPException(status_code=404, detail="No frontend directory in worktree")
-
-    # Check if node_modules exists, if not install
-    node_modules = frontend_path / "node_modules"
-    if not node_modules.exists():
-        print(f"[DevServer] Installing dependencies for task {task_number}...")
-        try:
-            subprocess.run(
-                ["npm", "install"],
-                cwd=str(frontend_path),
-                capture_output=True,
-                timeout=180,
-                check=True
-            )
-        except subprocess.TimeoutExpired:
-            raise HTTPException(status_code=500, detail="npm install timed out")
-        except subprocess.CalledProcessError as e:
-            raise HTTPException(status_code=500, detail=f"npm install failed: {e.stderr}")
-
     # Find available port
     port = find_available_port(BASE_DEV_PORT + task_number)
 
-    # Start the dev server
-    process = subprocess.Popen(
-        ["npm", "run", "dev", "--", "--port", str(port)],
-        cwd=str(frontend_path),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        start_new_session=True
-    )
+    # Use custom dev_script if provided, otherwise use default
+    if dev_script:
+        # Replace {port} placeholder
+        command = dev_script.replace("{port}", str(port))
+        print(f"[DevServer] Running custom script for task {task_number}: {command}")
+
+        process = subprocess.Popen(
+            command,
+            shell=True,
+            cwd=str(worktree_path),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True
+        )
+    else:
+        # Default behavior: run npm run dev in frontend directory
+        frontend_path = Path(worktree_path) / "frontend"
+        if not frontend_path.exists():
+            raise HTTPException(status_code=404, detail="No frontend directory in worktree. Configure a custom dev script in project settings.")
+
+        # Check if node_modules exists, if not install
+        node_modules = frontend_path / "node_modules"
+        if not node_modules.exists():
+            print(f"[DevServer] Installing dependencies for task {task_number}...")
+            try:
+                subprocess.run(
+                    ["npm", "install"],
+                    cwd=str(frontend_path),
+                    capture_output=True,
+                    timeout=180,
+                    check=True
+                )
+            except subprocess.TimeoutExpired:
+                raise HTTPException(status_code=500, detail="npm install timed out")
+            except subprocess.CalledProcessError as e:
+                raise HTTPException(status_code=500, detail=f"npm install failed: {e.stderr}")
+
+        print(f"[DevServer] Starting default dev server for task {task_number} on port {port}")
+        process = subprocess.Popen(
+            ["npm", "run", "dev", "--", "--port", str(port)],
+            cwd=str(frontend_path),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True
+        )
 
     # Track it
     _running_dev_servers[task_number] = {
