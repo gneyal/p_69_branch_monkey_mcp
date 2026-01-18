@@ -464,7 +464,7 @@
               </div>
 
               <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                <template x-for="wt in worktrees" :key="wt.path">
+                <template x-for="wt in [...worktrees].sort((a, b) => (b.task_number || 0) - (a.task_number || 0))" :key="wt.path">
                   <div class="bg-black/30 rounded-xl p-4 border border-white/5 hover:border-apple-cyan/30 transition-colors">
                     <!-- Worktree Header -->
                     <div class="flex items-center justify-between mb-3">
@@ -472,7 +472,7 @@
                         <span class="w-2 h-2 rounded-full" :class="wt.merged_to_main ? 'bg-apple-green' : wt.has_changes ? 'bg-apple-orange animate-pulse' : 'bg-apple-cyan'"></span>
                         <span class="mono text-sm font-medium cursor-pointer hover:text-apple-cyan transition-colors"
                               :class="wt.showFullName ? '' : 'truncate max-w-[150px]'"
-                              :title="wt.branch || 'detached'"
+                              :title="wt.path"
                               @click="wt.showFullName = !wt.showFullName"
                               x-text="wt.branch || 'detached'"></span>
                       </div>
@@ -707,7 +707,7 @@
         </div>
 
         <div class="space-y-2">
-          <template x-for="wt in worktrees" :key="wt.path">
+          <template x-for="wt in [...worktrees].sort((a, b) => (b.task_number || 0) - (a.task_number || 0))" :key="wt.path">
             <div class="card rounded-xl p-4">
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-3">
@@ -721,7 +721,7 @@
                   </div>
                   <div>
                     <div class="flex items-center gap-2">
-                      <span class="mono text-sm font-medium" x-text="wt.branch || 'detached'"></span>
+                      <span class="mono text-sm font-medium" :title="wt.path" x-text="wt.branch || 'detached'"></span>
                       <span x-show="wt.task_number" class="text-xs text-apple-secondary bg-white/5 px-1.5 py-0.5 rounded" x-text="'Task #' + wt.task_number"></span>
                       <span x-show="wt.has_changes" class="text-[10px] px-1.5 py-0.5 rounded-full bg-apple-orange/15 text-apple-orange">Modified</span>
                       <span x-show="wt.merged_to_main" class="text-[10px] px-1.5 py-0.5 rounded-full bg-apple-green/15 text-apple-green">Merged</span>
