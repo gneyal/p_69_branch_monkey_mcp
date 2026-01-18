@@ -277,6 +277,9 @@ class RelayClient:
         # Register this machine
         await self._register_machine()
 
+        # Send initial heartbeat to local server
+        await self._send_local_heartbeat()
+
         self._running = True
 
         # Start heartbeat loop
@@ -315,12 +318,31 @@ class RelayClient:
         while self._running:
             try:
                 await asyncio.sleep(25)
+                # Heartbeat to Supabase
                 await self.supabase.table("compute_nodes").update({
                     "last_heartbeat": datetime.utcnow().isoformat(),
                     "status": "online"
                 }).eq("machine_id", self.machine_id).execute()
+                # Heartbeat to local server (so dashboard knows relay is connected)
+                await self._send_local_heartbeat()
             except Exception as e:
                 print(f"[Relay] Heartbeat error: {e}")
+
+    async def _send_local_heartbeat(self):
+        """Send heartbeat to local server to indicate relay is connected."""
+        try:
+            async with httpx.AsyncClient() as client:
+                await client.post(
+                    f"http://127.0.0.1:{self.local_port}/api/relay/heartbeat",
+                    json={
+                        "machine_id": self.machine_id,
+                        "machine_name": self.machine_name,
+                        "cloud_url": self.cloud_url
+                    },
+                    timeout=5
+                )
+        except Exception:
+            pass  # Local server might not support this yet
 
     async def _unregister_machine(self):
         """Mark compute node as offline."""
@@ -328,6 +350,15 @@ class RelayClient:
             await self.supabase.table("compute_nodes").update({
                 "status": "offline"
             }).eq("machine_id", self.machine_id).execute()
+        except Exception:
+            pass
+        # Notify local server of disconnection
+        try:
+            async with httpx.AsyncClient() as client:
+                await client.post(
+                    f"http://127.0.0.1:{self.local_port}/api/relay/disconnect",
+                    timeout=5
+                )
         except Exception:
             pass
 

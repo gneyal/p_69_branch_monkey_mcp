@@ -266,10 +266,12 @@
     <nav class="surface border-b border-white/5 sticky top-14 z-40">
       <div class="max-w-6xl mx-auto px-6 flex gap-6">
         <template x-for="t in [
+          {id: 'relay', label: 'Overview'},
           {id: 'agents', label: 'Agents'},
           {id: 'worktrees', label: 'Worktrees'},
           {id: 'devServers', label: 'Dev Servers'},
-          {id: 'gitHistory', label: 'Git History'}
+          {id: 'gitHistory', label: 'Git History'},
+          {id: 'api', label: 'API'}
         ]">
           <button
             @click="activeTab = t.id"
@@ -283,6 +285,313 @@
 
     <!-- Content -->
     <main class="max-w-6xl mx-auto px-6 py-6">
+      <!-- Relay Overview / Architecture Diagram -->
+      <div x-show="activeTab === 'relay'" x-cloak>
+        <div class="flex flex-col items-center py-4">
+          <!-- Cloud Layer -->
+          <div class="relative">
+            <div class="card rounded-2xl p-5 min-w-[280px] text-center border-apple-blue/30">
+              <div class="flex items-center justify-center gap-3 mb-2">
+                <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-apple-blue to-apple-purple flex items-center justify-center">
+                  <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z"/>
+                  </svg>
+                </div>
+                <div class="text-left">
+                  <div class="font-semibold text-lg">Branch Monkey Cloud</div>
+                  <div class="text-xs text-apple-secondary">p-63-branch-monkey.pages.dev</div>
+                </div>
+              </div>
+              <div class="flex items-center justify-center gap-2 mt-3">
+                <button @click="checkCloudStatus()" class="btn btn-secondary px-3 py-1.5 rounded-lg text-xs">
+                  Check Status
+                </button>
+                <div class="status-pill" :class="cloudReachable === true ? 'status-running' : cloudReachable === false ? 'status-failed' : 'bg-white/10 text-apple-secondary'">
+                  <span class="w-1.5 h-1.5 rounded-full bg-current" :class="cloudReachable === true ? 'animate-pulse' : ''"></span>
+                  <span x-text="cloudReachable === true ? 'Reachable' : cloudReachable === false ? 'Unreachable' : 'Unknown'"></span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Connection Line: Cloud to Relay -->
+          <div class="flex flex-col items-center py-2">
+            <div class="w-px h-8 bg-gradient-to-b from-apple-blue/50 to-apple-yellow/50"></div>
+            <div class="px-3 py-1 rounded-full bg-apple-yellow/10 border border-apple-yellow/30 text-[10px] text-apple-yellow font-medium">
+              Supabase Realtime
+            </div>
+            <div class="w-px h-8 bg-gradient-to-b from-apple-yellow/50 to-apple-green/50"></div>
+          </div>
+
+          <!-- Relay Client Layer -->
+          <div class="relative">
+            <div class="card rounded-2xl p-5 min-w-[280px] text-center" :class="relayConnected ? 'border-apple-green/30' : 'border-apple-orange/30'">
+              <div class="flex items-center justify-center gap-3 mb-2">
+                <div class="w-12 h-12 rounded-xl flex items-center justify-center" :class="relayConnected ? 'bg-apple-green/20' : 'bg-apple-orange/20'">
+                  <svg class="w-6 h-6" :class="relayConnected ? 'text-apple-green' : 'text-apple-orange'" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/>
+                  </svg>
+                </div>
+                <div class="text-left">
+                  <div class="font-semibold text-lg">Relay Client</div>
+                  <div class="text-xs text-apple-secondary" x-text="relayInfo?.machine_name || 'branch-monkey-relay'"></div>
+                </div>
+              </div>
+              <div class="flex items-center justify-center gap-2 mt-3">
+                <div class="status-pill" :class="relayConnected ? 'status-running' : 'status-paused'">
+                  <span class="w-1.5 h-1.5 rounded-full bg-current" :class="relayConnected ? 'animate-pulse' : ''"></span>
+                  <span x-text="relayConnected ? 'Connected' : 'Not Running'"></span>
+                </div>
+              </div>
+              <!-- Connected: show cloud URL -->
+              <div x-show="relayConnected && relayInfo?.cloud_url" class="mt-3 text-xs text-apple-secondary">
+                <span class="text-apple-tertiary">Cloud:</span> <span class="text-apple-cyan" x-text="relayInfo?.cloud_url?.replace('https://', '')"></span>
+              </div>
+              <!-- Not connected: show command to run -->
+              <div x-show="!relayConnected" class="mt-3 text-xs text-apple-tertiary">
+                Run: <code class="mono text-apple-cyan">branch-monkey-relay</code>
+              </div>
+            </div>
+          </div>
+
+          <!-- Connection Line: Relay to Local Server -->
+          <div class="flex flex-col items-center py-2">
+            <div class="w-px h-8 bg-gradient-to-b from-apple-green/50 to-apple-cyan/50"></div>
+            <div class="px-3 py-1 rounded-full bg-apple-cyan/10 border border-apple-cyan/30 text-[10px] text-apple-cyan font-medium">
+              HTTP localhost:18081
+            </div>
+            <div class="w-px h-8 bg-gradient-to-b from-apple-cyan/50 to-apple-purple/50"></div>
+          </div>
+
+          <!-- Local Server Layer -->
+          <div class="relative">
+            <div class="card rounded-2xl p-5 min-w-[280px] text-center border-apple-green/30">
+              <div class="flex items-center justify-center gap-3 mb-2">
+                <div class="w-12 h-12 rounded-xl bg-apple-green/20 flex items-center justify-center">
+                  <svg class="w-6 h-6 text-apple-green" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"/>
+                  </svg>
+                </div>
+                <div class="text-left">
+                  <div class="font-semibold text-lg">Local Server</div>
+                  <div class="text-xs text-apple-secondary" x-text="'http://localhost:18081'"></div>
+                </div>
+              </div>
+              <div class="flex items-center justify-center gap-2 mt-3">
+                <div class="status-pill status-running">
+                  <span class="w-1.5 h-1.5 rounded-full bg-current animate-pulse"></span>
+                  <span>Running</span>
+                </div>
+                <div x-show="claudeInstalled" class="status-pill bg-apple-purple/15 text-apple-purple">
+                  <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                  </svg>
+                  <span>Claude CLI</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Project Directory Section -->
+          <div class="w-full max-w-xl mt-4">
+            <div class="card rounded-xl p-4">
+              <div class="flex items-center gap-2 mb-3">
+                <div class="w-8 h-8 rounded-lg bg-apple-yellow/15 flex items-center justify-center">
+                  <svg class="w-4 h-4 text-apple-yellow" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+                  </svg>
+                </div>
+                <div class="flex-1">
+                  <div class="font-medium text-sm">Project Directory</div>
+                  <div class="text-[10px] text-apple-secondary">Working directory for agents and worktrees</div>
+                </div>
+                <button @click="newDirectoryPath = workingDirectory; directoryError = null; showDirectoryModal = true" class="btn btn-secondary px-3 py-1.5 rounded-lg text-xs">
+                  Change
+                </button>
+              </div>
+              <div class="bg-black/30 rounded-lg p-3">
+                <div class="flex items-center gap-2">
+                  <span class="mono text-xs text-apple-cyan truncate flex-1" x-text="workingDirectory || 'Not configured'"></span>
+                  <span x-show="workingDirInfo?.is_git_repo" class="text-[10px] px-2 py-0.5 rounded-full bg-apple-green/15 text-apple-green">Git</span>
+                </div>
+                <div x-show="workingDirInfo?.worktree_count > 0" class="text-[10px] text-apple-secondary mt-2">
+                  <span x-text="workingDirInfo?.worktree_count"></span> worktrees found
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Connection Line to Worktrees -->
+          <div class="flex flex-col items-center py-2">
+            <div class="w-px h-8 bg-gradient-to-b from-apple-purple/50 to-apple-cyan/50"></div>
+            <div class="px-3 py-1 rounded-full bg-apple-cyan/10 border border-apple-cyan/30 text-[10px] text-apple-cyan font-medium">
+              Git Worktrees
+            </div>
+            <div class="w-px h-4 bg-apple-cyan/30"></div>
+          </div>
+
+          <!-- Worktrees Container -->
+          <div class="w-full max-w-5xl">
+            <div class="card rounded-2xl p-4 border-apple-cyan/20">
+              <div class="flex items-center justify-between mb-4">
+                <div class="flex items-center gap-2">
+                  <div class="w-8 h-8 rounded-lg bg-apple-cyan/15 flex items-center justify-center">
+                    <svg class="w-4 h-4 text-apple-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+                    </svg>
+                  </div>
+                  <div>
+                    <div class="font-medium">Worktrees</div>
+                    <div class="text-[10px] text-apple-secondary">Isolated environments for parallel development</div>
+                  </div>
+                </div>
+                <div class="text-sm font-semibold" :class="worktrees.length > 0 ? 'text-apple-cyan' : 'text-apple-tertiary'" x-text="worktrees.length + ' active'"></div>
+              </div>
+
+              <!-- Worktrees Grid -->
+              <div x-show="worktrees.length === 0" class="text-center py-8 text-apple-tertiary text-sm">
+                No worktrees active. Start an agent to create one.
+              </div>
+
+              <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                <template x-for="wt in worktrees" :key="wt.path">
+                  <div class="bg-black/30 rounded-xl p-4 border border-white/5 hover:border-apple-cyan/30 transition-colors">
+                    <!-- Worktree Header -->
+                    <div class="flex items-center justify-between mb-3">
+                      <div class="flex items-center gap-2">
+                        <span class="w-2 h-2 rounded-full" :class="wt.merged_to_main ? 'bg-apple-green' : wt.has_changes ? 'bg-apple-orange animate-pulse' : 'bg-apple-cyan'"></span>
+                        <span class="mono text-sm font-medium truncate max-w-[150px]" x-text="wt.branch || 'detached'"></span>
+                      </div>
+                      <span class="text-[10px] px-2 py-0.5 rounded-full"
+                            :class="wt.merged_to_main ? 'bg-apple-green/15 text-apple-green' : wt.has_changes ? 'bg-apple-orange/15 text-apple-orange' : 'bg-white/5 text-apple-secondary'"
+                            x-text="wt.merged_to_main ? 'Merged' : wt.has_changes ? 'Modified' : 'Clean'"></span>
+                    </div>
+
+                    <!-- Task Number -->
+                    <div x-show="wt.task_number" class="text-xs text-apple-secondary mb-3">
+                      Task #<span x-text="wt.task_number"></span>
+                    </div>
+
+                    <!-- Agent inside this worktree -->
+                    <div class="space-y-2">
+                      <template x-for="agent in agents.filter(a => a.worktree_path === wt.path || (wt.task_number && a.task_number == wt.task_number))" :key="agent.id">
+                        <div class="flex items-center gap-2 bg-apple-blue/10 rounded-lg px-3 py-2 border border-apple-blue/20">
+                          <div class="w-6 h-6 rounded-md bg-apple-blue/20 flex items-center justify-center">
+                            <svg class="w-3 h-3 text-apple-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+                            </svg>
+                          </div>
+                          <div class="flex-1 min-w-0">
+                            <div class="text-xs font-medium truncate" x-text="agent.task_title || 'Agent'"></div>
+                            <div class="text-[10px] text-apple-secondary" x-text="agent.status"></div>
+                          </div>
+                          <span class="w-1.5 h-1.5 rounded-full" :class="{
+                            'bg-apple-green animate-pulse': agent.status === 'running',
+                            'bg-apple-orange': agent.status === 'paused',
+                            'bg-apple-blue': agent.status === 'completed',
+                            'bg-apple-red': agent.status === 'failed'
+                          }"></span>
+                        </div>
+                      </template>
+
+                      <!-- Dev Server inside this worktree -->
+                      <template x-for="server in devServers.filter(s => s.worktreePath === wt.path)" :key="server.runId">
+                        <div class="flex items-center gap-2 bg-apple-orange/10 rounded-lg px-3 py-2 border border-apple-orange/20">
+                          <div class="w-6 h-6 rounded-md bg-apple-orange/20 flex items-center justify-center">
+                            <svg class="w-3 h-3 text-apple-orange" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                            </svg>
+                          </div>
+                          <div class="flex-1 min-w-0">
+                            <div class="text-xs font-medium">Dev Server</div>
+                            <div class="text-[10px] text-apple-secondary mono" x-text="'localhost:' + server.port"></div>
+                          </div>
+                          <a :href="server.url" target="_blank"
+                             class="px-2 py-1 rounded-md bg-apple-orange/20 hover:bg-apple-orange/30 text-[10px] text-apple-orange font-medium transition-colors">
+                            Open
+                          </a>
+                          <span class="w-1.5 h-1.5 rounded-full bg-apple-green animate-pulse"></span>
+                        </div>
+                      </template>
+
+                      <!-- Empty state for worktree with no agent/server -->
+                      <template x-if="!agents.some(a => a.worktree_path === wt.path || (wt.task_number && a.task_number == wt.task_number)) && !devServers.some(s => wt.task_number && s.taskNumber == wt.task_number)">
+                        <div class="text-[10px] text-apple-tertiary text-center py-2">No active processes</div>
+                      </template>
+                    </div>
+
+                    <!-- Last Commit -->
+                    <div x-show="wt.last_commit" class="mt-3 pt-3 border-t border-white/5">
+                      <div class="flex items-center gap-2 text-[10px]">
+                        <span class="mono text-apple-yellow" x-text="wt.last_commit?.hash"></span>
+                        <span class="text-apple-secondary truncate" x-text="wt.last_commit?.message"></span>
+                      </div>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </div>
+
+          <!-- Orphan Agents (not in any worktree) -->
+          <template x-if="agents.filter(a => !worktrees.some(wt => wt.path === a.worktree_path || (wt.task_number && a.task_number == wt.task_number))).length > 0">
+            <div class="w-full max-w-5xl mt-4">
+              <div class="card rounded-xl p-4 border-apple-blue/20">
+                <div class="flex items-center gap-2 mb-3">
+                  <div class="w-6 h-6 rounded-lg bg-apple-blue/15 flex items-center justify-center">
+                    <svg class="w-3 h-3 text-apple-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+                    </svg>
+                  </div>
+                  <div class="text-sm font-medium">Standalone Agents</div>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+                  <template x-for="agent in agents.filter(a => !worktrees.some(wt => wt.path === a.worktree_path || (wt.task_number && a.task_number == wt.task_number)))" :key="agent.id">
+                    <div class="flex items-center gap-2 bg-black/20 rounded-lg px-3 py-2">
+                      <span class="w-1.5 h-1.5 rounded-full" :class="{
+                        'bg-apple-green animate-pulse': agent.status === 'running',
+                        'bg-apple-orange': agent.status === 'paused',
+                        'bg-apple-blue': agent.status === 'completed',
+                        'bg-apple-red': agent.status === 'failed'
+                      }"></span>
+                      <span class="text-xs truncate" x-text="agent.task_title || agent.id"></span>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <!-- Summary Stats -->
+          <div class="mt-8 w-full max-w-4xl">
+            <div class="card rounded-xl p-4">
+              <div class="grid grid-cols-2 md:grid-cols-5 gap-4 text-center">
+                <div>
+                  <div class="text-2xl font-bold" :class="connected ? 'text-apple-green' : 'text-apple-red'" x-text="connected ? '●' : '○'"></div>
+                  <div class="text-xs text-apple-secondary mt-1">Server</div>
+                </div>
+                <div>
+                  <div class="text-2xl font-bold" :class="claudeInstalled ? 'text-apple-purple' : 'text-apple-tertiary'" x-text="claudeInstalled ? '●' : '○'"></div>
+                  <div class="text-xs text-apple-secondary mt-1">Claude CLI</div>
+                </div>
+                <div>
+                  <div class="text-2xl font-bold text-apple-blue" x-text="agents.filter(a => a.status === 'running').length"></div>
+                  <div class="text-xs text-apple-secondary mt-1">Active Agents</div>
+                </div>
+                <div>
+                  <div class="text-2xl font-bold text-apple-cyan" x-text="worktrees.filter(w => !w.merged_to_main).length"></div>
+                  <div class="text-xs text-apple-secondary mt-1">Open Branches</div>
+                </div>
+                <div>
+                  <div class="text-2xl font-bold text-apple-orange" x-text="devServers.length"></div>
+                  <div class="text-xs text-apple-secondary mt-1">Dev Servers</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Agents -->
       <div x-show="activeTab === 'agents'" x-cloak>
         <div x-show="agents.length === 0" class="text-center py-20">
@@ -584,6 +893,458 @@
           </div>
         </div>
       </div>
+
+      <!-- API Documentation -->
+      <div x-show="activeTab === 'api'" x-cloak>
+        <div class="space-y-6">
+          <!-- Status & Health -->
+          <div class="card rounded-xl overflow-hidden">
+            <div class="px-4 py-3 border-b border-white/5 flex items-center gap-2">
+              <div class="w-6 h-6 rounded-lg bg-apple-green/15 flex items-center justify-center">
+                <svg class="w-3.5 h-3.5 text-apple-green" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+              </div>
+              <h3 class="font-medium text-sm">Status & Health</h3>
+            </div>
+            <div class="divide-y divide-white/5">
+              <div class="p-4">
+                <div class="flex items-center gap-2 mb-2">
+                  <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-apple-green/20 text-apple-green">GET</span>
+                  <code class="mono text-sm text-apple-cyan">/health</code>
+                </div>
+                <p class="text-xs text-apple-secondary mb-2">Basic health check endpoint.</p>
+                <div class="text-xs text-apple-tertiary">Returns: <code class="mono text-apple-yellow">{"status": "ok"}</code></div>
+              </div>
+              <div class="p-4">
+                <div class="flex items-center gap-2 mb-2">
+                  <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-apple-green/20 text-apple-green">GET</span>
+                  <code class="mono text-sm text-apple-cyan">/api/status</code>
+                </div>
+                <p class="text-xs text-apple-secondary mb-2">Server status with working directory info.</p>
+                <div class="text-xs text-apple-tertiary">Returns: <code class="mono text-apple-yellow">{"status", "working_directory"}</code></div>
+              </div>
+              <div class="p-4">
+                <div class="flex items-center gap-2 mb-2">
+                  <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-apple-green/20 text-apple-green">GET</span>
+                  <code class="mono text-sm text-apple-cyan">/api/local-claude/check</code>
+                </div>
+                <p class="text-xs text-apple-secondary mb-2">Check if Claude CLI is installed.</p>
+                <div class="text-xs text-apple-tertiary">Returns: <code class="mono text-apple-yellow">{"installed", "path", "version"}</code></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Agents -->
+          <div class="card rounded-xl overflow-hidden">
+            <div class="px-4 py-3 border-b border-white/5 flex items-center gap-2">
+              <div class="w-6 h-6 rounded-lg bg-apple-blue/15 flex items-center justify-center">
+                <svg class="w-3.5 h-3.5 text-apple-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+                </svg>
+              </div>
+              <h3 class="font-medium text-sm">Agents</h3>
+            </div>
+            <div class="divide-y divide-white/5">
+              <div class="p-4">
+                <div class="flex items-center gap-2 mb-2">
+                  <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-apple-orange/20 text-apple-orange">POST</span>
+                  <code class="mono text-sm text-apple-cyan">/api/local-claude/agents</code>
+                </div>
+                <p class="text-xs text-apple-secondary mb-2">Start a new Claude agent.</p>
+                <div class="text-xs text-apple-tertiary mb-1">Body: <code class="mono text-apple-yellow">{"task_number", "task_title", "task_description", "model?"}</code></div>
+                <div class="text-xs text-apple-tertiary">Returns: <code class="mono text-apple-yellow">{"id", "status", "branch", "worktree_path"}</code></div>
+              </div>
+              <div class="p-4">
+                <div class="flex items-center gap-2 mb-2">
+                  <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-apple-green/20 text-apple-green">GET</span>
+                  <code class="mono text-sm text-apple-cyan">/api/local-claude/agents</code>
+                </div>
+                <p class="text-xs text-apple-secondary mb-2">List all running agents.</p>
+                <div class="text-xs text-apple-tertiary">Returns: Array of agent objects</div>
+              </div>
+              <div class="p-4">
+                <div class="flex items-center gap-2 mb-2">
+                  <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-apple-green/20 text-apple-green">GET</span>
+                  <code class="mono text-sm text-apple-cyan">/api/local-claude/agents/{`{id}`}</code>
+                </div>
+                <p class="text-xs text-apple-secondary mb-2">Get details of a specific agent.</p>
+                <div class="text-xs text-apple-tertiary">Returns: Agent object with status, branch, worktree, etc.</div>
+              </div>
+              <div class="p-4">
+                <div class="flex items-center gap-2 mb-2">
+                  <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-apple-red/20 text-apple-red">DELETE</span>
+                  <code class="mono text-sm text-apple-cyan">/api/local-claude/agents/{`{id}`}</code>
+                </div>
+                <p class="text-xs text-apple-secondary mb-2">Kill a running agent.</p>
+                <div class="text-xs text-apple-tertiary">Returns: <code class="mono text-apple-yellow">{"status": "killed"}</code></div>
+              </div>
+              <div class="p-4">
+                <div class="flex items-center gap-2 mb-2">
+                  <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-apple-orange/20 text-apple-orange">POST</span>
+                  <code class="mono text-sm text-apple-cyan">/api/local-claude/agents/{`{id}`}/input</code>
+                </div>
+                <p class="text-xs text-apple-secondary mb-2">Send follow-up input to a paused agent.</p>
+                <div class="text-xs text-apple-tertiary">Body: <code class="mono text-apple-yellow">{"input": "your message"}</code></div>
+              </div>
+              <div class="p-4">
+                <div class="flex items-center gap-2 mb-2">
+                  <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-apple-green/20 text-apple-green">GET</span>
+                  <code class="mono text-sm text-apple-cyan">/api/local-claude/agents/{`{id}`}/output</code>
+                </div>
+                <p class="text-xs text-apple-secondary mb-2">Get accumulated output from an agent.</p>
+                <div class="text-xs text-apple-tertiary">Query: <code class="mono text-apple-yellow">?offset=0</code> (optional)</div>
+              </div>
+              <div class="p-4">
+                <div class="flex items-center gap-2 mb-2">
+                  <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-apple-purple/20 text-apple-purple">SSE</span>
+                  <code class="mono text-sm text-apple-cyan">/api/local-claude/agents/{`{id}`}/stream</code>
+                </div>
+                <p class="text-xs text-apple-secondary mb-2">Server-Sent Events stream for real-time output.</p>
+                <div class="text-xs text-apple-tertiary">Events: <code class="mono text-apple-yellow">output</code>, <code class="mono text-apple-yellow">exit</code>, <code class="mono text-apple-yellow">paused</code></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Worktrees -->
+          <div class="card rounded-xl overflow-hidden">
+            <div class="px-4 py-3 border-b border-white/5 flex items-center gap-2">
+              <div class="w-6 h-6 rounded-lg bg-apple-cyan/15 flex items-center justify-center">
+                <svg class="w-3.5 h-3.5 text-apple-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+                </svg>
+              </div>
+              <h3 class="font-medium text-sm">Worktrees</h3>
+            </div>
+            <div class="divide-y divide-white/5">
+              <div class="p-4">
+                <div class="flex items-center gap-2 mb-2">
+                  <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-apple-green/20 text-apple-green">GET</span>
+                  <code class="mono text-sm text-apple-cyan">/api/local-claude/worktrees</code>
+                </div>
+                <p class="text-xs text-apple-secondary mb-2">List all git worktrees with status info.</p>
+                <div class="text-xs text-apple-tertiary">Returns: <code class="mono text-apple-yellow">{"worktrees": [{branch, path, has_changes, merged_to_main, last_commit}]}</code></div>
+              </div>
+              <div class="p-4">
+                <div class="flex items-center gap-2 mb-2">
+                  <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-apple-red/20 text-apple-red">DELETE</span>
+                  <code class="mono text-sm text-apple-cyan">/api/local-claude/worktree</code>
+                </div>
+                <p class="text-xs text-apple-secondary mb-2">Delete a worktree and optionally its branch.</p>
+                <div class="text-xs text-apple-tertiary">Query: <code class="mono text-apple-yellow">?task_number=42&worktree_path=/path</code></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Git Operations -->
+          <div class="card rounded-xl overflow-hidden">
+            <div class="px-4 py-3 border-b border-white/5 flex items-center gap-2">
+              <div class="w-6 h-6 rounded-lg bg-apple-purple/15 flex items-center justify-center">
+                <svg class="w-3.5 h-3.5 text-apple-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                </svg>
+              </div>
+              <h3 class="font-medium text-sm">Git Operations</h3>
+            </div>
+            <div class="divide-y divide-white/5">
+              <div class="p-4">
+                <div class="flex items-center gap-2 mb-2">
+                  <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-apple-green/20 text-apple-green">GET</span>
+                  <code class="mono text-sm text-apple-cyan">/api/local-claude/commits</code>
+                </div>
+                <p class="text-xs text-apple-secondary mb-2">Get commit history.</p>
+                <div class="text-xs text-apple-tertiary">Query: <code class="mono text-apple-yellow">?limit=20&all_branches=false&task_number=?</code></div>
+              </div>
+              <div class="p-4">
+                <div class="flex items-center gap-2 mb-2">
+                  <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-apple-green/20 text-apple-green">GET</span>
+                  <code class="mono text-sm text-apple-cyan">/api/local-claude/commit-diff/{`{sha}`}</code>
+                </div>
+                <p class="text-xs text-apple-secondary mb-2">Get diff for a specific commit.</p>
+                <div class="text-xs text-apple-tertiary">Returns: <code class="mono text-apple-yellow">{"sha", "message", "diff", "files"}</code></div>
+              </div>
+              <div class="p-4">
+                <div class="flex items-center gap-2 mb-2">
+                  <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-apple-green/20 text-apple-green">GET</span>
+                  <code class="mono text-sm text-apple-cyan">/api/local-claude/diff</code>
+                </div>
+                <p class="text-xs text-apple-secondary mb-2">Get uncommitted changes in a worktree.</p>
+                <div class="text-xs text-apple-tertiary">Query: <code class="mono text-apple-yellow">?task_number=42</code></div>
+              </div>
+              <div class="p-4">
+                <div class="flex items-center gap-2 mb-2">
+                  <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-apple-green/20 text-apple-green">GET</span>
+                  <code class="mono text-sm text-apple-cyan">/api/local-claude/merge-preview</code>
+                </div>
+                <p class="text-xs text-apple-secondary mb-2">Preview merge conflicts before merging.</p>
+                <div class="text-xs text-apple-tertiary">Query: <code class="mono text-apple-yellow">?task_number=42&branch=feature</code></div>
+              </div>
+              <div class="p-4">
+                <div class="flex items-center gap-2 mb-2">
+                  <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-apple-orange/20 text-apple-orange">POST</span>
+                  <code class="mono text-sm text-apple-cyan">/api/local-claude/merge</code>
+                </div>
+                <p class="text-xs text-apple-secondary mb-2">Merge a branch into main.</p>
+                <div class="text-xs text-apple-tertiary">Body: <code class="mono text-apple-yellow">{"task_number", "branch"}</code></div>
+              </div>
+              <div class="p-4">
+                <div class="flex items-center gap-2 mb-2">
+                  <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-apple-orange/20 text-apple-orange">POST</span>
+                  <code class="mono text-sm text-apple-cyan">/api/local-claude/open-in-editor</code>
+                </div>
+                <p class="text-xs text-apple-secondary mb-2">Open worktree in VS Code / Cursor.</p>
+                <div class="text-xs text-apple-tertiary">Body: <code class="mono text-apple-yellow">{"task_number"}</code></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Dev Servers -->
+          <div class="card rounded-xl overflow-hidden">
+            <div class="px-4 py-3 border-b border-white/5 flex items-center gap-2">
+              <div class="w-6 h-6 rounded-lg bg-apple-orange/15 flex items-center justify-center">
+                <svg class="w-3.5 h-3.5 text-apple-orange" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2"/>
+                </svg>
+              </div>
+              <h3 class="font-medium text-sm">Dev Servers</h3>
+            </div>
+            <div class="divide-y divide-white/5">
+              <div class="p-4">
+                <div class="flex items-center gap-2 mb-2">
+                  <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-apple-green/20 text-apple-green">GET</span>
+                  <code class="mono text-sm text-apple-cyan">/api/local-claude/dev-server</code>
+                </div>
+                <p class="text-xs text-apple-secondary mb-2">List running dev servers and proxy status.</p>
+                <div class="text-xs text-apple-tertiary">Returns: <code class="mono text-apple-yellow">{"servers": [], "proxy": {running, proxyPort, targetPort}}</code></div>
+              </div>
+              <div class="p-4">
+                <div class="flex items-center gap-2 mb-2">
+                  <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-apple-orange/20 text-apple-orange">POST</span>
+                  <code class="mono text-sm text-apple-cyan">/api/local-claude/dev-server</code>
+                </div>
+                <p class="text-xs text-apple-secondary mb-2">Start a dev server in a worktree.</p>
+                <div class="text-xs text-apple-tertiary">Body: <code class="mono text-apple-yellow">{"task_number", "command?"}</code></div>
+              </div>
+              <div class="p-4">
+                <div class="flex items-center gap-2 mb-2">
+                  <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-apple-red/20 text-apple-red">DELETE</span>
+                  <code class="mono text-sm text-apple-cyan">/api/local-claude/dev-server</code>
+                </div>
+                <p class="text-xs text-apple-secondary mb-2">Stop a running dev server.</p>
+                <div class="text-xs text-apple-tertiary">Query: <code class="mono text-apple-yellow">?run_id=abc123</code></div>
+              </div>
+              <div class="p-4">
+                <div class="flex items-center gap-2 mb-2">
+                  <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-apple-green/20 text-apple-green">GET</span>
+                  <code class="mono text-sm text-apple-cyan">/api/local-claude/dev-proxy</code>
+                </div>
+                <p class="text-xs text-apple-secondary mb-2">Get dev proxy status.</p>
+                <div class="text-xs text-apple-tertiary">Returns: <code class="mono text-apple-yellow">{"running", "proxyPort", "proxyUrl", "targetPort", "targetRunId"}</code></div>
+              </div>
+              <div class="p-4">
+                <div class="flex items-center gap-2 mb-2">
+                  <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-apple-orange/20 text-apple-orange">POST</span>
+                  <code class="mono text-sm text-apple-cyan">/api/local-claude/dev-proxy</code>
+                </div>
+                <p class="text-xs text-apple-secondary mb-2">Set the dev proxy target to a specific server.</p>
+                <div class="text-xs text-apple-tertiary">Query: <code class="mono text-apple-yellow">?run_id=abc123</code></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Time Machine -->
+          <div class="card rounded-xl overflow-hidden">
+            <div class="px-4 py-3 border-b border-white/5 flex items-center gap-2">
+              <div class="w-6 h-6 rounded-lg bg-apple-pink/15 flex items-center justify-center">
+                <svg class="w-3.5 h-3.5 text-apple-pink" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+              </div>
+              <h3 class="font-medium text-sm">Time Machine</h3>
+            </div>
+            <div class="divide-y divide-white/5">
+              <div class="p-4">
+                <div class="flex items-center gap-2 mb-2">
+                  <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-apple-green/20 text-apple-green">GET</span>
+                  <code class="mono text-sm text-apple-cyan">/api/local-claude/time-machine/previews</code>
+                </div>
+                <p class="text-xs text-apple-secondary mb-2">List active commit previews.</p>
+                <div class="text-xs text-apple-tertiary">Returns: <code class="mono text-apple-yellow">{"previews": [{sha, url, port}]}</code></div>
+              </div>
+              <div class="p-4">
+                <div class="flex items-center gap-2 mb-2">
+                  <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-apple-orange/20 text-apple-orange">POST</span>
+                  <code class="mono text-sm text-apple-cyan">/api/local-claude/time-machine/preview</code>
+                </div>
+                <p class="text-xs text-apple-secondary mb-2">Start a preview server at a specific commit.</p>
+                <div class="text-xs text-apple-tertiary">Body: <code class="mono text-apple-yellow">{"commit_sha"}</code></div>
+              </div>
+              <div class="p-4">
+                <div class="flex items-center gap-2 mb-2">
+                  <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-apple-red/20 text-apple-red">DELETE</span>
+                  <code class="mono text-sm text-apple-cyan">/api/local-claude/time-machine/preview/{`{sha}`}</code>
+                </div>
+                <p class="text-xs text-apple-secondary mb-2">Stop a commit preview server.</p>
+                <div class="text-xs text-apple-tertiary">Returns: <code class="mono text-apple-yellow">{"status": "stopped"}</code></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Relay Architecture -->
+          <div class="card rounded-xl overflow-hidden">
+            <div class="px-4 py-3 border-b border-white/5 flex items-center gap-2">
+              <div class="w-6 h-6 rounded-lg bg-apple-yellow/15 flex items-center justify-center">
+                <svg class="w-3.5 h-3.5 text-apple-yellow" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/>
+                </svg>
+              </div>
+              <h3 class="font-medium text-sm">Relay Architecture</h3>
+            </div>
+            <div class="p-4 space-y-4">
+              <p class="text-xs text-apple-secondary">The relay system bridges your local machine to Branch Monkey Cloud, enabling remote control via the web UI.</p>
+
+              <div class="bg-black/30 rounded-xl p-4 space-y-3">
+                <div class="flex items-center gap-3">
+                  <div class="w-24 text-center">
+                    <div class="bg-apple-blue/20 text-apple-blue text-[10px] font-medium px-2 py-1 rounded-lg">Cloud UI</div>
+                    <div class="text-[10px] text-apple-tertiary mt-1">p-63-branch-monkey.pages.dev</div>
+                  </div>
+                  <div class="flex-1 border-t border-dashed border-apple-yellow/50 relative">
+                    <span class="absolute -top-2.5 left-1/2 -translate-x-1/2 text-[10px] text-apple-yellow bg-black/50 px-2">Supabase Realtime</span>
+                  </div>
+                  <div class="w-24 text-center">
+                    <div class="bg-apple-green/20 text-apple-green text-[10px] font-medium px-2 py-1 rounded-lg">Relay Client</div>
+                    <div class="text-[10px] text-apple-tertiary mt-1">branch-monkey-relay</div>
+                  </div>
+                  <div class="flex-1 border-t border-apple-cyan/50 relative">
+                    <span class="absolute -top-2.5 left-1/2 -translate-x-1/2 text-[10px] text-apple-cyan bg-black/50 px-2">HTTP</span>
+                  </div>
+                  <div class="w-24 text-center">
+                    <div class="bg-apple-purple/20 text-apple-purple text-[10px] font-medium px-2 py-1 rounded-lg">Local Server</div>
+                    <div class="text-[10px] text-apple-tertiary mt-1">localhost:18081</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                <div class="bg-black/20 rounded-lg p-3">
+                  <div class="font-medium text-apple-green mb-2">Start Relay</div>
+                  <code class="mono text-[11px] text-apple-secondary">branch-monkey-relay --dir /path/to/project</code>
+                </div>
+                <div class="bg-black/20 rounded-lg p-3">
+                  <div class="font-medium text-apple-cyan mb-2">Relay Options</div>
+                  <div class="mono text-[11px] text-apple-secondary space-y-1">
+                    <div>--port 18081 <span class="text-apple-tertiary"># Local server port</span></div>
+                    <div>--no-server <span class="text-apple-tertiary"># Use existing server</span></div>
+                    <div>--no-mcp <span class="text-apple-tertiary"># Skip MCP config setup</span></div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="text-xs text-apple-tertiary">
+                <span class="text-apple-yellow">Note:</span> The relay authenticates via device code flow on first run. Token is cached at <code class="mono">~/.branch-monkey/relay_token.json</code>
+              </div>
+            </div>
+          </div>
+
+          <!-- MCP Tools -->
+          <div class="card rounded-xl overflow-hidden">
+            <div class="px-4 py-3 border-b border-white/5 flex items-center gap-2">
+              <div class="w-6 h-6 rounded-lg bg-gradient-to-br from-apple-blue to-apple-purple flex items-center justify-center">
+                <svg class="w-3.5 h-3.5 text-white" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+                </svg>
+              </div>
+              <h3 class="font-medium text-sm">MCP Tools (Claude Code)</h3>
+            </div>
+            <div class="p-4 space-y-4">
+              <p class="text-xs text-apple-secondary">These tools are available when using Branch Monkey as an MCP server in Claude Code.</p>
+
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+                <div class="bg-black/20 rounded-lg p-3">
+                  <div class="font-medium text-apple-blue mb-2">Authentication</div>
+                  <div class="space-y-1 mono text-[11px]">
+                    <div><span class="text-apple-cyan">monkey_status</span> <span class="text-apple-tertiary">- Connection status</span></div>
+                    <div><span class="text-apple-cyan">monkey_login</span> <span class="text-apple-tertiary">- Re-authenticate</span></div>
+                    <div><span class="text-apple-cyan">monkey_logout</span> <span class="text-apple-tertiary">- Clear token</span></div>
+                  </div>
+                </div>
+                <div class="bg-black/20 rounded-lg p-3">
+                  <div class="font-medium text-apple-green mb-2">Projects</div>
+                  <div class="space-y-1 mono text-[11px]">
+                    <div><span class="text-apple-cyan">monkey_project_list</span> <span class="text-apple-tertiary">- List projects</span></div>
+                    <div><span class="text-apple-cyan">monkey_project_focus</span> <span class="text-apple-tertiary">- Set active project</span></div>
+                    <div><span class="text-apple-cyan">monkey_org_list</span> <span class="text-apple-tertiary">- List organizations</span></div>
+                  </div>
+                </div>
+                <div class="bg-black/20 rounded-lg p-3">
+                  <div class="font-medium text-apple-orange mb-2">Tasks</div>
+                  <div class="space-y-1 mono text-[11px]">
+                    <div><span class="text-apple-cyan">monkey_task_list</span> <span class="text-apple-tertiary">- List tasks</span></div>
+                    <div><span class="text-apple-cyan">monkey_task_create</span> <span class="text-apple-tertiary">- Create task</span></div>
+                    <div><span class="text-apple-cyan">monkey_task_work</span> <span class="text-apple-tertiary">- Start working</span></div>
+                    <div><span class="text-apple-cyan">monkey_task_log</span> <span class="text-apple-tertiary">- Log progress</span></div>
+                    <div><span class="text-apple-cyan">monkey_task_complete</span> <span class="text-apple-tertiary">- Complete + PR</span></div>
+                    <div><span class="text-apple-cyan">monkey_task_search</span> <span class="text-apple-tertiary">- Search tasks</span></div>
+                  </div>
+                </div>
+                <div class="bg-black/20 rounded-lg p-3">
+                  <div class="font-medium text-apple-purple mb-2">Contexts</div>
+                  <div class="space-y-1 mono text-[11px]">
+                    <div><span class="text-apple-cyan">monkey_context_list</span> <span class="text-apple-tertiary">- List contexts</span></div>
+                    <div><span class="text-apple-cyan">monkey_context_create</span> <span class="text-apple-tertiary">- Create context</span></div>
+                    <div><span class="text-apple-cyan">monkey_task_link_context</span> <span class="text-apple-tertiary">- Link to task</span></div>
+                    <div><span class="text-apple-cyan">monkey_context_search</span> <span class="text-apple-tertiary">- Search contexts</span></div>
+                  </div>
+                </div>
+                <div class="bg-black/20 rounded-lg p-3">
+                  <div class="font-medium text-apple-pink mb-2">Resources</div>
+                  <div class="space-y-1 mono text-[11px]">
+                    <div><span class="text-apple-cyan">monkey_machine_list</span> <span class="text-apple-tertiary">- List machines</span></div>
+                    <div><span class="text-apple-cyan">monkey_version_list</span> <span class="text-apple-tertiary">- List versions</span></div>
+                    <div><span class="text-apple-cyan">monkey_team_list</span> <span class="text-apple-tertiary">- List team members</span></div>
+                    <div><span class="text-apple-cyan">monkey_domain_list</span> <span class="text-apple-tertiary">- List domains</span></div>
+                    <div><span class="text-apple-cyan">monkey_note_list</span> <span class="text-apple-tertiary">- List notes</span></div>
+                  </div>
+                </div>
+                <div class="bg-black/20 rounded-lg p-3">
+                  <div class="font-medium text-apple-yellow mb-2">MCP Setup</div>
+                  <div class="mono text-[10px] text-apple-secondary bg-black/30 rounded p-2 mt-1">
+                    <div class="text-apple-tertiary mb-1">// .mcp.json</div>
+                    <div>"branch-monkey-cloud": {</div>
+                    <div class="pl-2">"command": "uvx",</div>
+                    <div class="pl-2">"args": ["--from", "git+..."]</div>
+                    <div>}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Quick Reference -->
+          <div class="card rounded-xl p-4">
+            <h3 class="font-medium text-sm mb-3">Quick Reference</h3>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+              <div>
+                <div class="text-apple-secondary mb-1">Local Server</div>
+                <code class="mono text-apple-cyan">http://localhost:18081</code>
+              </div>
+              <div>
+                <div class="text-apple-secondary mb-1">Cloud API</div>
+                <code class="mono text-apple-blue">p-63-branch-monkey.pages.dev</code>
+              </div>
+              <div>
+                <div class="text-apple-secondary mb-1">Content-Type</div>
+                <code class="mono text-apple-yellow">application/json</code>
+              </div>
+              <div>
+                <div class="text-apple-secondary mb-1">Error Format</div>
+                <code class="mono text-apple-red">{"detail": "..."}</code>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </main>
 
     <!-- Diff Modal -->
@@ -625,6 +1386,59 @@
         </div>
       </div>
     </div>
+
+    <!-- Directory Modal -->
+    <div x-show="showDirectoryModal" x-cloak @click.self="showDirectoryModal = false"
+         x-transition:enter="transition ease-out duration-200"
+         x-transition:enter-start="opacity-0"
+         x-transition:enter-end="opacity-100"
+         x-transition:leave="transition ease-in duration-150"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0"
+         class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-6">
+      <div x-show="showDirectoryModal"
+           x-transition:enter="transition ease-out duration-200"
+           x-transition:enter-start="opacity-0 scale-95"
+           x-transition:enter-end="opacity-100 scale-100"
+           class="surface rounded-2xl max-w-lg w-full overflow-hidden flex flex-col border border-white/10">
+        <div class="px-5 py-4 border-b border-white/5 flex items-center justify-between">
+          <div>
+            <h3 class="font-semibold">Change Project Directory</h3>
+            <span class="text-xs text-apple-secondary">Set the working directory for agents and worktrees</span>
+          </div>
+          <button @click="showDirectoryModal = false; directoryError = null" class="p-1.5 hover:bg-white/5 rounded-lg transition-colors">
+            <svg class="w-5 h-5 text-apple-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M6 18L18 6M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+        <div class="p-5">
+          <div class="mb-4">
+            <label class="text-xs text-apple-secondary block mb-2">Directory Path</label>
+            <input type="text"
+                   x-model="newDirectoryPath"
+                   @keydown.enter="setWorkingDirectory()"
+                   placeholder="/path/to/your/project"
+                   class="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-3 text-sm mono focus:border-apple-blue/50 placeholder-apple-tertiary">
+          </div>
+          <div x-show="workingDirectory" class="mb-4 text-xs text-apple-secondary">
+            <span class="text-apple-tertiary">Current:</span>
+            <span class="mono text-apple-cyan" x-text="workingDirectory"></span>
+          </div>
+          <div x-show="directoryError" class="mb-4 bg-apple-red/10 border border-apple-red/20 rounded-lg px-4 py-3">
+            <p class="text-sm text-apple-red" x-text="directoryError"></p>
+          </div>
+          <div class="flex gap-3 justify-end">
+            <button @click="showDirectoryModal = false; directoryError = null" class="btn btn-secondary px-4 py-2 rounded-xl text-sm">
+              Cancel
+            </button>
+            <button @click="setWorkingDirectory()" class="btn btn-primary px-4 py-2 rounded-xl text-sm">
+              Save
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script>
@@ -632,7 +1446,7 @@
       return {
         connected: false,
         claudeInstalled: false,
-        activeTab: 'agents',
+        activeTab: 'relay',
         agents: [],
         agentOutput: {},
         inputMessages: {},
@@ -647,10 +1461,21 @@
         commitDiff: null,
         showDiffModal: false,
         previews: [],
+        cloudReachable: null,
+        relayConnected: false,
+        relayInfo: null,
+        workingDirectory: '',
+        workingDirInfo: null,
+        showDirectoryModal: false,
+        newDirectoryPath: '',
+        directoryError: null,
 
         async init() {
           await this.refreshAll();
+          this.checkRelayStatus();
+          this.refreshWorkingDirectory();
           setInterval(() => this.refreshAll(), 5000);
+          setInterval(() => this.checkRelayStatus(), 10000);
         },
 
         async refreshAll() {
@@ -660,8 +1485,78 @@
             this.refreshWorktrees(),
             this.refreshDevServers(),
             this.refreshCommits(),
-            this.refreshPreviews()
+            this.refreshPreviews(),
+            this.refreshWorkingDirectory()
           ]);
+        },
+
+        async refreshWorkingDirectory() {
+          try {
+            const res = await fetch('/api/config/working-directory');
+            const data = await res.json();
+            this.workingDirectory = data.working_directory;
+            this.workingDirInfo = data;
+          } catch (e) {
+            this.workingDirectory = '';
+            this.workingDirInfo = null;
+          }
+        },
+
+        async setWorkingDirectory() {
+          if (!this.newDirectoryPath.trim()) {
+            this.directoryError = 'Please enter a directory path';
+            return;
+          }
+          this.directoryError = null;
+          try {
+            const res = await fetch('/api/config/working-directory', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ directory: this.newDirectoryPath.trim() })
+            });
+            const data = await res.json();
+            if (!res.ok) {
+              this.directoryError = data.detail || 'Failed to set directory';
+              return;
+            }
+            this.workingDirectory = data.working_directory;
+            this.workingDirInfo = data;
+            this.showDirectoryModal = false;
+            this.newDirectoryPath = '';
+            // Refresh worktrees with new directory
+            await this.refreshWorktrees();
+          } catch (e) {
+            this.directoryError = 'Failed to set directory: ' + e.message;
+          }
+        },
+
+        async checkCloudStatus() {
+          try {
+            this.cloudReachable = null;
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 5000);
+            const res = await fetch('https://p-63-branch-monkey.pages.dev/api/health', {
+              method: 'GET',
+              mode: 'cors',
+              signal: controller.signal
+            });
+            clearTimeout(timeoutId);
+            this.cloudReachable = res.ok;
+          } catch (e) {
+            this.cloudReachable = false;
+          }
+        },
+
+        async checkRelayStatus() {
+          try {
+            const res = await fetch('/api/relay/status');
+            const data = await res.json();
+            this.relayConnected = data.connected || false;
+            this.relayInfo = data;
+          } catch (e) {
+            this.relayConnected = false;
+            this.relayInfo = null;
+          }
         },
 
         async refreshStatus() {

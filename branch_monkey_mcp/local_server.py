@@ -84,11 +84,50 @@ if _default_working_dir:
 
 
 # =============================================================================
+# Relay Status Tracking
+# =============================================================================
+
+_relay_status = {
+    "connected": False,
+    "machine_id": None,
+    "machine_name": None,
+    "cloud_url": None,
+    "last_heartbeat": None,
+    "connected_at": None,
+}
+
+
+def update_relay_status(
+    connected: bool,
+    machine_id: str = None,
+    machine_name: str = None,
+    cloud_url: str = None
+) -> None:
+    """Update relay connection status."""
+    global _relay_status
+    _relay_status["connected"] = connected
+    if connected:
+        _relay_status["machine_id"] = machine_id
+        _relay_status["machine_name"] = machine_name
+        _relay_status["cloud_url"] = cloud_url
+        _relay_status["last_heartbeat"] = datetime.utcnow().isoformat()
+        if not _relay_status["connected_at"]:
+            _relay_status["connected_at"] = datetime.utcnow().isoformat()
+    else:
+        _relay_status["connected_at"] = None
+
+
+def get_relay_status() -> dict:
+    """Get current relay status."""
+    return _relay_status.copy()
+
+
+# =============================================================================
 # Dev Proxy Server
 # =============================================================================
 
-# Default auth-allowed port for Supabase
-AUTH_PROXY_PORT = 5176
+# Default auth-allowed port for dev proxy
+DEFAULT_PROXY_PORT = 5177
 
 # Current proxy state
 _proxy_state = {
@@ -96,7 +135,8 @@ _proxy_state = {
     "target_run_id": None,
     "server": None,
     "thread": None,
-    "running": False
+    "running": False,
+    "proxy_port": DEFAULT_PROXY_PORT  # Configurable at runtime
 }
 
 
@@ -169,13 +209,19 @@ class DevProxyHandler(BaseHTTPRequestHandler):
         self.do_request("HEAD")
 
 
-def start_dev_proxy(proxy_port: int = AUTH_PROXY_PORT) -> bool:
-    """Start the dev proxy server on the auth-allowed port."""
+def start_dev_proxy(proxy_port: int = None) -> bool:
+    """Start the dev proxy server on the configured port."""
     global _proxy_state
 
+    if proxy_port is None:
+        proxy_port = _proxy_state["proxy_port"]
+
     if _proxy_state["running"]:
-        print(f"[DevProxy] Already running on port {proxy_port}")
-        return True
+        if _proxy_state["proxy_port"] == proxy_port:
+            print(f"[DevProxy] Already running on port {proxy_port}")
+            return True
+        # Port changed, need to restart
+        stop_dev_proxy()
 
     # Check if port is available
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -196,6 +242,7 @@ def start_dev_proxy(proxy_port: int = AUTH_PROXY_PORT) -> bool:
         _proxy_state["server"] = server
         _proxy_state["thread"] = thread
         _proxy_state["running"] = True
+        _proxy_state["proxy_port"] = proxy_port
 
         return True
     except Exception as e:
@@ -227,12 +274,13 @@ def set_proxy_target(port: int, run_id: str = None):
 
 def get_proxy_status() -> dict:
     """Get current proxy status."""
+    proxy_port = _proxy_state["proxy_port"]
     return {
         "running": _proxy_state["running"],
-        "proxyPort": AUTH_PROXY_PORT,
+        "proxyPort": proxy_port,
         "targetPort": _proxy_state["target_port"],
         "targetRunId": _proxy_state["target_run_id"],
-        "proxyUrl": f"http://localhost:{AUTH_PROXY_PORT}" if _proxy_state["running"] else None
+        "proxyUrl": f"http://localhost:{proxy_port}" if _proxy_state["running"] else None
     }
 
 
@@ -1022,7 +1070,121 @@ def api_status():
         "status": "ok",
         "service": "branch-monkey-relay",
         "agents": len(agent_manager._agents),
-        "mode": "local"
+        "mode": "local",
+        "working_directory": get_default_working_dir()
+    }
+
+
+# =============================================================================
+# Relay Status Endpoints
+# =============================================================================
+
+
+class RelayHeartbeat(BaseModel):
+    """Relay heartbeat request."""
+    machine_id: str
+    machine_name: str
+    cloud_url: str
+
+
+@app.get("/api/relay/status")
+def relay_status():
+    """Get current relay connection status."""
+    status = get_relay_status()
+    # Check if heartbeat is recent (within 60 seconds)
+    if status["last_heartbeat"]:
+        from datetime import datetime
+        last_hb = datetime.fromisoformat(status["last_heartbeat"])
+        age_seconds = (datetime.utcnow() - last_hb).total_seconds()
+        status["connected"] = age_seconds < 60
+        status["heartbeat_age_seconds"] = int(age_seconds)
+    return status
+
+
+@app.post("/api/relay/heartbeat")
+def relay_heartbeat(heartbeat: RelayHeartbeat):
+    """Receive heartbeat from relay client to indicate it's connected."""
+    update_relay_status(
+        connected=True,
+        machine_id=heartbeat.machine_id,
+        machine_name=heartbeat.machine_name,
+        cloud_url=heartbeat.cloud_url
+    )
+    return {"status": "ok", "received": datetime.utcnow().isoformat()}
+
+
+@app.post("/api/relay/disconnect")
+def relay_disconnect():
+    """Mark relay as disconnected."""
+    update_relay_status(connected=False)
+    return {"status": "ok", "disconnected": True}
+
+
+# =============================================================================
+# Working Directory Configuration
+# =============================================================================
+
+
+class WorkingDirectoryRequest(BaseModel):
+    """Request to set working directory."""
+    directory: str
+
+
+@app.get("/api/config/working-directory")
+def get_working_directory():
+    """Get the current working directory for agent execution."""
+    work_dir = get_default_working_dir()
+    git_root = get_git_root(work_dir)
+
+    # Check if it's a valid git repo
+    is_git_repo = git_root is not None
+
+    # Count worktrees if it's a git repo
+    worktree_count = 0
+    if git_root:
+        worktrees_dir = Path(git_root) / ".worktrees"
+        if worktrees_dir.exists():
+            worktree_count = len([d for d in worktrees_dir.iterdir() if d.is_dir()])
+
+    return {
+        "working_directory": work_dir,
+        "git_root": git_root,
+        "is_git_repo": is_git_repo,
+        "worktree_count": worktree_count
+    }
+
+
+@app.post("/api/config/working-directory")
+def set_working_directory(request: WorkingDirectoryRequest):
+    """Set the working directory for agent execution."""
+    directory = request.directory
+
+    # Validate directory exists
+    if not os.path.isdir(directory):
+        raise HTTPException(status_code=400, detail=f"Directory does not exist: {directory}")
+
+    # Resolve to absolute path
+    abs_path = os.path.abspath(directory)
+
+    # Check if it's a git repo
+    git_root = get_git_root(abs_path)
+    if not git_root:
+        raise HTTPException(status_code=400, detail=f"Not a git repository: {abs_path}")
+
+    # Set the new working directory
+    set_default_working_dir(abs_path)
+
+    # Count worktrees
+    worktree_count = 0
+    worktrees_dir = Path(git_root) / ".worktrees"
+    if worktrees_dir.exists():
+        worktree_count = len([d for d in worktrees_dir.iterdir() if d.is_dir()])
+
+    return {
+        "status": "ok",
+        "working_directory": abs_path,
+        "git_root": git_root,
+        "worktree_count": worktree_count
     }
 
 
@@ -1488,6 +1650,7 @@ async def start_dev_server(request: DevServerRequest):
         "task_id": request.task_id,
         "task_number": task_number,
         "run_id": run_id,
+        "worktree_path": str(worktree_path),
         "started_at": datetime.now().isoformat()
     }
 
@@ -1521,7 +1684,8 @@ def list_dev_servers():
             "url": f"http://localhost:{info['port']}",
             "proxyUrl": proxy_status["proxyUrl"] if is_active else None,
             "isActive": is_active,
-            "startedAt": info["started_at"]
+            "startedAt": info["started_at"],
+            "worktreePath": info.get("worktree_path")
         })
     return {"servers": servers, "proxy": proxy_status}
 
@@ -1545,6 +1709,48 @@ def set_dev_proxy_target(run_id: str):
     info = _running_dev_servers[run_id]
     set_proxy_target(info["port"], run_id)
     return get_proxy_status()
+
+
+@app.put("/api/local-claude/dev-proxy/port")
+def set_dev_proxy_port(port: int):
+    """Set the proxy port. Restarts proxy if already running."""
+    if port < 1024 or port > 65535:
+        raise HTTPException(status_code=400, detail="Port must be between 1024 and 65535")
+
+    old_port = _proxy_state["proxy_port"]
+    was_running = _proxy_state["running"]
+    target_port = _proxy_state["target_port"]
+    target_run_id = _proxy_state["target_run_id"]
+
+    # Update the port in state
+    _proxy_state["proxy_port"] = port
+
+    # If proxy was running, restart on new port
+    if was_running:
+        stop_dev_proxy()
+        success = start_dev_proxy(port)
+        if not success:
+            # Revert to old port
+            _proxy_state["proxy_port"] = old_port
+            start_dev_proxy(old_port)
+            raise HTTPException(status_code=500, detail=f"Port {port} is not available, reverted to {old_port}")
+        # Restore target if there was one
+        if target_port:
+            set_proxy_target(target_port, target_run_id)
+
+    return {
+        "success": True,
+        "oldPort": old_port,
+        "newPort": port,
+        "status": get_proxy_status()
+    }
+
+
+@app.delete("/api/local-claude/dev-proxy")
+def stop_dev_proxy_endpoint():
+    """Stop the dev proxy server."""
+    stop_dev_proxy()
+    return {"success": True, "status": get_proxy_status()}
 
 
 @app.delete("/api/local-claude/dev-server")
