@@ -1485,15 +1485,15 @@
         },
 
         async fetchAppConfig() {
-          // Try to fetch app name from the cloud, default to 'Branch Monkey'
+          // Fetch app config from local server (proxied from cloud)
           try {
-            // First get the cloud URL from relay status
+            // Also get cloud URL for display
             const relayRes = await fetch('/api/relay/status');
             const relayData = await relayRes.json();
-            const cloudUrl = relayData.cloud_url || 'https://p-63-branch-monkey.pages.dev';
-            this.cloudUrl = cloudUrl;
+            this.cloudUrl = relayData.cloud_url || 'https://p-63-branch-monkey.pages.dev';
 
-            const res = await fetch(`${cloudUrl}/api/config`);
+            // Fetch config from local server (avoids CORS issues)
+            const res = await fetch('/api/config');
             if (res.ok) {
               const data = await res.json();
               if (data.appNameDisplay || data.appNameTitle || data.appName) {

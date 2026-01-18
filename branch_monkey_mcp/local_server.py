@@ -1077,6 +1077,56 @@ def api_status():
     }
 
 
+# Default app config values
+_DEFAULT_APP_CONFIG = {
+    "appName": "branch/main",
+    "appNameDisplay": "Branch Monkey",
+    "appNameTitle": "Branch Monkey",
+    "appMcpNameTitle": "Branch Monkey",
+    "appDomain": None
+}
+
+# Cached app config
+_cached_app_config = None
+_app_config_fetched_at = None
+
+
+@app.get("/api/config")
+async def get_app_config():
+    """Get app configuration, proxied from cloud with caching."""
+    global _cached_app_config, _app_config_fetched_at
+
+    # Use cache if fresh (within 5 minutes)
+    if _cached_app_config and _app_config_fetched_at:
+        age_seconds = (datetime.utcnow() - _app_config_fetched_at).total_seconds()
+        if age_seconds < 300:
+            return _cached_app_config
+
+    # Try to fetch from cloud
+    relay_status = get_relay_status()
+    cloud_url = relay_status.get("cloud_url") or "https://p-63-branch-monkey.pages.dev"
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            res = await client.get(f"{cloud_url}/api/config")
+            if res.status_code == 200:
+                data = res.json()
+                _cached_app_config = {
+                    "appName": data.get("appName", _DEFAULT_APP_CONFIG["appName"]),
+                    "appNameDisplay": data.get("appNameDisplay", _DEFAULT_APP_CONFIG["appNameDisplay"]),
+                    "appNameTitle": data.get("appNameTitle", _DEFAULT_APP_CONFIG["appNameTitle"]),
+                    "appMcpNameTitle": data.get("appMcpNameTitle", _DEFAULT_APP_CONFIG["appMcpNameTitle"]),
+                    "appDomain": data.get("appDomain", _DEFAULT_APP_CONFIG["appDomain"])
+                }
+                _app_config_fetched_at = datetime.utcnow()
+                return _cached_app_config
+    except Exception as e:
+        print(f"[Config] Failed to fetch from cloud: {e}")
+
+    # Return cached or default
+    return _cached_app_config or _DEFAULT_APP_CONFIG
+
+
 # =============================================================================
 # Relay Status Endpoints
 # =============================================================================
