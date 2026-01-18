@@ -227,12 +227,7 @@
       <div class="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
         <div class="flex items-center gap-8">
           <div class="flex items-center gap-2.5">
-            <div class="w-7 h-7 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center">
-              <svg class="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
-              </svg>
-            </div>
-            <span class="font-semibold text-[15px]">Branch Monkey</span>
+            <span class="font-semibold text-[15px]" x-text="appName"></span>
           </div>
 
           <div class="flex items-center gap-4 text-[13px]">
@@ -298,7 +293,7 @@
                   </svg>
                 </div>
                 <div class="text-left">
-                  <div class="font-semibold text-lg">Branch Monkey Cloud</div>
+                  <div class="font-semibold text-lg" x-text="appName + ' Cloud'"></div>
                   <div class="text-xs text-apple-secondary">p-63-branch-monkey.pages.dev</div>
                 </div>
               </div>
@@ -1444,6 +1439,9 @@
   <script>
     function dashboard() {
       return {
+        // Configurable app name
+        appName: 'Branch Monkey',
+
         connected: false,
         claudeInstalled: false,
         activeTab: 'relay',
@@ -1471,6 +1469,7 @@
         directoryError: null,
 
         async init() {
+          document.title = this.appName;
           await this.refreshAll();
           this.checkRelayStatus();
           this.refreshWorkingDirectory();
