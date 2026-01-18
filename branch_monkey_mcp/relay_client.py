@@ -334,13 +334,8 @@ class RelayClient:
             self.channel.on_broadcast("ping", lambda _: self._send_pong())
             self.channel.on_broadcast("disconnect", on_disconnect)
 
-            # Subscribe
-            subscribe_status = await self.channel.subscribe()
-
-            if subscribe_status != "SUBSCRIBED":
-                print(f"[Relay] Failed to subscribe: {subscribe_status}")
-                self.connection_state = ConnectionState.DISCONNECTED
-                return False
+            # Subscribe (returns channel object, throws on error)
+            await self.channel.subscribe()
 
             print(f"\n[Relay] Connected to Supabase Realtime!")
             print(f"[Relay] Channel: {channel_name}")
