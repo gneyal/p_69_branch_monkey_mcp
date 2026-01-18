@@ -409,7 +409,7 @@ class RelayClient:
 
             if msg_type in ("request", "stream_request"):
                 response = await self._execute_local_request(payload)
-                self.channel.send_broadcast("response", response)
+                await self.channel.send_broadcast("response", response)
                 print(f"[Relay] Sent response: status={response.get('status')}")
 
         except Exception as e:
