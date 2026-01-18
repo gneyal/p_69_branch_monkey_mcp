@@ -455,7 +455,11 @@
                     <div class="flex items-center justify-between mb-3">
                       <div class="flex items-center gap-2">
                         <span class="w-2 h-2 rounded-full" :class="wt.merged_to_main ? 'bg-apple-green' : wt.has_changes ? 'bg-apple-orange animate-pulse' : 'bg-apple-cyan'"></span>
-                        <span class="mono text-sm font-medium truncate max-w-[150px]" x-text="wt.branch || 'detached'"></span>
+                        <span class="mono text-sm font-medium cursor-pointer hover:text-apple-cyan transition-colors"
+                              :class="wt.showFullName ? '' : 'truncate max-w-[150px]'"
+                              :title="wt.branch || 'detached'"
+                              @click="wt.showFullName = !wt.showFullName"
+                              x-text="wt.branch || 'detached'"></span>
                       </div>
                       <span class="text-[10px] px-2 py-0.5 rounded-full"
                             :class="wt.merged_to_main ? 'bg-apple-green/15 text-apple-green' : wt.has_changes ? 'bg-apple-orange/15 text-apple-orange' : 'bg-white/5 text-apple-secondary'"
