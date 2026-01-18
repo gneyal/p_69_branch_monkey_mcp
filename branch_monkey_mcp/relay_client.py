@@ -12,6 +12,11 @@ The client:
 5. Receives requests and executes them locally
 6. Streams responses back through the channel
 
+Features:
+- Auto-reconnect with exponential backoff on connection loss
+- Health monitoring to detect silent disconnections
+- Graceful shutdown handling
+
 Usage:
     branch-monkey-relay
 """
@@ -19,14 +24,33 @@ Usage:
 import asyncio
 import json
 import os
+import random
 import socket
 import sys
 import time
 from datetime import datetime
+from enum import Enum
 from pathlib import Path
 from typing import Optional, Dict, Any
 
 import httpx
+
+
+# Reconnection settings
+INITIAL_RECONNECT_DELAY = 1  # seconds
+MAX_RECONNECT_DELAY = 60  # seconds
+RECONNECT_BACKOFF_MULTIPLIER = 2
+MAX_RECONNECT_ATTEMPTS = None  # None = unlimited
+CONNECTION_HEALTH_CHECK_INTERVAL = 30  # seconds
+HEARTBEAT_TIMEOUT = 60  # seconds - consider connection dead if no heartbeat succeeds
+
+
+class ConnectionState(Enum):
+    """Connection state for the relay client."""
+    DISCONNECTED = "disconnected"
+    CONNECTING = "connecting"
+    CONNECTED = "connected"
+    RECONNECTING = "reconnecting"
 
 # Config file location
 CONFIG_DIR = Path.home() / ".branch-monkey"
@@ -69,7 +93,8 @@ class RelayClient:
     - Device authentication flow
     - Supabase Realtime connection
     - Request/response relay
-    - Auto-reconnection
+    - Auto-reconnection with exponential backoff
+    - Health monitoring
     - Compute node registration
     """
 
@@ -97,6 +122,25 @@ class RelayClient:
         self.channel = None
 
         self._running = False
+
+        # Connection state tracking for auto-reconnect
+        self.connection_state = ConnectionState.DISCONNECTED
+        self.reconnect_attempts = 0
+        self.last_successful_heartbeat: Optional[datetime] = None
+        self.should_reconnect = True  # False when explicitly disconnected
+        self._reconnect_task: Optional[asyncio.Task] = None
+        self._health_check_task: Optional[asyncio.Task] = None
+        self._heartbeat_task: Optional[asyncio.Task] = None
+
+    def _get_reconnect_delay(self) -> float:
+        """Calculate reconnect delay with exponential backoff and jitter."""
+        delay = min(
+            INITIAL_RECONNECT_DELAY * (RECONNECT_BACKOFF_MULTIPLIER ** self.reconnect_attempts),
+            MAX_RECONNECT_DELAY
+        )
+        # Add jitter (±20%) to prevent thundering herd
+        jitter = delay * 0.2 * (random.random() * 2 - 1)
+        return delay + jitter
 
     def _get_machine_name(self) -> str:
         """Generate a human-readable machine name."""
@@ -238,22 +282,18 @@ class RelayClient:
             print("[Relay] Authentication timed out")
             return False
 
-    async def connect(self):
+    async def _connect_channel(self) -> bool:
         """
-        Connect to Supabase Realtime and start receiving requests.
+        Internal method to establish Supabase Realtime connection.
+        Returns True if successful, False otherwise.
         """
-        if not self.relay_config:
-            if not await self.authenticate():
-                print("[Relay] Authentication failed, cannot connect")
-                return
-
         # Import supabase here to avoid import errors if not installed
         try:
             from supabase import acreate_client, AsyncClient
         except ImportError:
             print("[Relay] Error: supabase library not installed")
             print("[Relay] Install with: pip install supabase")
-            return
+            return False
 
         supabase_url = self.relay_config.get("supabase_url")
         supabase_key = self.relay_config.get("supabase_key")
@@ -261,7 +301,9 @@ class RelayClient:
 
         if not supabase_url or not supabase_key:
             print("[Relay] Error: Missing Supabase config")
-            return
+            return False
+
+        self.connection_state = ConnectionState.CONNECTING
 
         print(f"\n[Relay] Connecting to Supabase Realtime...")
         print(f"[Relay] User ID: {self.user_id}")
@@ -269,55 +311,200 @@ class RelayClient:
         print(f"[Relay] Machine name: {self.machine_name}")
         print(f"[Relay] Local port: {self.local_port}")
 
-        # Create Supabase client
-        self.supabase = await acreate_client(supabase_url, supabase_key)
+        try:
+            # Create Supabase client
+            self.supabase = await acreate_client(supabase_url, supabase_key)
 
-        # Channel name for this machine
-        channel_name = f"{channel_prefix}:{self.user_id}:{self.machine_id}"
+            # Channel name for this machine
+            channel_name = f"{channel_prefix}:{self.user_id}:{self.machine_id}"
 
-        # Subscribe to channel
-        self.channel = self.supabase.channel(channel_name)
+            # Subscribe to channel
+            self.channel = self.supabase.channel(channel_name)
 
-        # Handle incoming messages
-        def on_request(payload):
-            asyncio.create_task(self._handle_message(payload))
+            # Handle incoming messages
+            def on_request(payload):
+                asyncio.create_task(self._handle_message(payload))
 
-        def on_disconnect(payload):
-            print(f"\n[Relay] Received disconnect command from cloud")
-            asyncio.create_task(self._shutdown())
+            def on_disconnect(payload):
+                print(f"\n[Relay] Received disconnect command from cloud")
+                asyncio.create_task(self._shutdown())
 
-        self.channel.on_broadcast("request", on_request)
-        self.channel.on_broadcast("stream_request", on_request)
-        self.channel.on_broadcast("ping", lambda _: self._send_pong())
-        self.channel.on_broadcast("disconnect", on_disconnect)
+            self.channel.on_broadcast("request", on_request)
+            self.channel.on_broadcast("stream_request", on_request)
+            self.channel.on_broadcast("ping", lambda _: self._send_pong())
+            self.channel.on_broadcast("disconnect", on_disconnect)
 
-        # Subscribe
-        await self.channel.subscribe()
+            # Subscribe
+            subscribe_status = await self.channel.subscribe()
 
-        print(f"\n[Relay] Connected to Supabase Realtime!")
-        print(f"[Relay] Channel: {channel_name}")
-        print(f"[Relay] Ready to receive requests from cloud\n")
+            if subscribe_status != "SUBSCRIBED":
+                print(f"[Relay] Failed to subscribe: {subscribe_status}")
+                self.connection_state = ConnectionState.DISCONNECTED
+                return False
 
-        # Register this machine
-        await self._register_machine()
+            print(f"\n[Relay] Connected to Supabase Realtime!")
+            print(f"[Relay] Channel: {channel_name}")
+            print(f"[Relay] Ready to receive requests from cloud\n")
 
-        # Send initial heartbeat to local server
-        await self._send_local_heartbeat()
+            # Register this machine
+            await self._register_machine()
+
+            # Send initial heartbeat to local server
+            await self._send_local_heartbeat()
+
+            # Update state
+            self.connection_state = ConnectionState.CONNECTED
+            self.reconnect_attempts = 0
+            self.last_successful_heartbeat = datetime.utcnow()
+
+            return True
+
+        except Exception as e:
+            print(f"[Relay] Connection failed: {e}")
+            self.connection_state = ConnectionState.DISCONNECTED
+            return False
+
+    async def _disconnect_channel(self):
+        """Disconnect from Supabase Realtime channel."""
+        try:
+            if self.channel and self.supabase:
+                await self.supabase.remove_channel(self.channel)
+                self.channel = None
+            self.connection_state = ConnectionState.DISCONNECTED
+            print("[Relay] Disconnected from channel")
+        except Exception as e:
+            print(f"[Relay] Error during disconnect: {e}")
+
+    async def _reconnect(self):
+        """Attempt to reconnect with exponential backoff."""
+        if not self.should_reconnect:
+            return
+
+        self.connection_state = ConnectionState.RECONNECTING
+
+        while self.should_reconnect and self._running:
+            # Check max attempts
+            if MAX_RECONNECT_ATTEMPTS is not None and self.reconnect_attempts >= MAX_RECONNECT_ATTEMPTS:
+                print(f"[Relay] Max reconnect attempts ({MAX_RECONNECT_ATTEMPTS}) reached. Giving up.")
+                self._running = False
+                return
+
+            delay = self._get_reconnect_delay()
+            self.reconnect_attempts += 1
+
+            print(f"[Relay] Reconnecting in {delay:.1f}s (attempt {self.reconnect_attempts})...")
+            await asyncio.sleep(delay)
+
+            if not self.should_reconnect or not self._running:
+                return
+
+            try:
+                # Clean up old connection
+                await self._disconnect_channel()
+
+                # Attempt reconnection
+                if await self._connect_channel():
+                    print(f"[Relay] Reconnected successfully!")
+                    return
+
+            except Exception as e:
+                print(f"[Relay] Reconnection attempt {self.reconnect_attempts} failed: {e}")
+                continue
+
+    async def _trigger_reconnect(self):
+        """Trigger a reconnection attempt."""
+        if self.connection_state == ConnectionState.RECONNECTING:
+            return  # Already reconnecting
+
+        print("[Relay] Triggering reconnection...")
+        self.connection_state = ConnectionState.DISCONNECTED
+
+        # Cancel existing reconnect task if any
+        if self._reconnect_task and not self._reconnect_task.done():
+            self._reconnect_task.cancel()
+
+        # Start reconnection
+        self._reconnect_task = asyncio.create_task(self._reconnect())
+
+    async def _health_check_loop(self):
+        """Monitor connection health and trigger reconnect if needed."""
+        while self._running:
+            try:
+                await asyncio.sleep(CONNECTION_HEALTH_CHECK_INTERVAL)
+
+                if self.connection_state != ConnectionState.CONNECTED:
+                    continue
+
+                # Check if heartbeat has succeeded recently
+                if self.last_successful_heartbeat:
+                    time_since_heartbeat = datetime.utcnow() - self.last_successful_heartbeat
+                    if time_since_heartbeat.total_seconds() > HEARTBEAT_TIMEOUT:
+                        print(f"[Relay] No successful heartbeat for {time_since_heartbeat.total_seconds():.0f}s - reconnecting")
+                        await self._trigger_reconnect()
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                print(f"[Relay] Health check error: {e}")
+
+    async def connect(self):
+        """
+        Connect to Supabase Realtime and start receiving requests.
+        Includes auto-reconnect on connection loss.
+        """
+        if not self.relay_config:
+            if not await self.authenticate():
+                print("[Relay] Authentication failed, cannot connect")
+                return
 
         self._running = True
 
-        # Start heartbeat loop
-        heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+        # Initial connection
+        if not await self._connect_channel():
+            print("[Relay] Initial connection failed, starting reconnection loop...")
+            await self._reconnect()
+            if not self._running:
+                return
+
+        # Start background tasks
+        self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+        self._health_check_task = asyncio.create_task(self._health_check_loop())
 
         try:
             # Keep running until stopped
             while self._running:
                 await asyncio.sleep(1)
+
+                # If disconnected and should reconnect, trigger it
+                if (self.connection_state == ConnectionState.DISCONNECTED
+                    and self.should_reconnect
+                    and (not self._reconnect_task or self._reconnect_task.done())):
+                    self._reconnect_task = asyncio.create_task(self._reconnect())
+
         except KeyboardInterrupt:
             print("\n[Relay] Shutting down...")
+        except asyncio.CancelledError:
+            print("\n[Relay] Task cancelled, shutting down...")
         finally:
             self._running = False
-            heartbeat_task.cancel()
+            self.should_reconnect = False
+
+            # Cancel background tasks
+            if self._heartbeat_task:
+                self._heartbeat_task.cancel()
+            if self._health_check_task:
+                self._health_check_task.cancel()
+            if self._reconnect_task:
+                self._reconnect_task.cancel()
+
+            # Wait for tasks to finish
+            tasks = [t for t in [self._heartbeat_task, self._health_check_task] if t]
+            if tasks:
+                try:
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                except Exception:
+                    pass
+
             await self._unregister_machine()
 
     async def _register_machine(self):
@@ -338,19 +525,40 @@ class RelayClient:
             print(f"[Relay] Warning: Could not register compute node: {e}")
 
     async def _heartbeat_loop(self):
-        """Send periodic heartbeats to keep connection alive."""
+        """Send periodic heartbeats to keep connection alive and detect disconnects."""
+        consecutive_failures = 0
+
         while self._running:
             try:
                 await asyncio.sleep(25)
+
+                if self.connection_state != ConnectionState.CONNECTED:
+                    continue
+
                 # Heartbeat to Supabase
                 await self.supabase.table("compute_nodes").update({
                     "last_heartbeat": datetime.utcnow().isoformat(),
                     "status": "online"
                 }).eq("machine_id", self.machine_id).execute()
+
                 # Heartbeat to local server (so dashboard knows relay is connected)
                 await self._send_local_heartbeat()
+
+                # Success - reset failure counter
+                self.last_successful_heartbeat = datetime.utcnow()
+                consecutive_failures = 0
+
+            except asyncio.CancelledError:
+                break
             except Exception as e:
-                print(f"[Relay] Heartbeat error: {e}")
+                consecutive_failures += 1
+                print(f"[Relay] Heartbeat error (attempt {consecutive_failures}): {e}")
+
+                # If heartbeats keep failing, connection might be dead
+                if consecutive_failures >= 3:
+                    print(f"[Relay] Multiple heartbeat failures - connection may be dead")
+                    await self._trigger_reconnect()
+                    consecutive_failures = 0
 
     async def _send_local_heartbeat(self):
         """Send heartbeat to local server to indicate relay is connected."""
@@ -390,6 +598,7 @@ class RelayClient:
         """Gracefully shutdown the relay client."""
         print("[Relay] Shutting down gracefully...")
         self._running = False
+        self.should_reconnect = False
         await self._unregister_machine()
         print("[Relay] Disconnected. Goodbye!")
         sys.exit(0)
@@ -468,6 +677,7 @@ class RelayClient:
     def stop(self):
         """Stop the relay client."""
         self._running = False
+        self.should_reconnect = False
 
 
 def run_relay_client(
