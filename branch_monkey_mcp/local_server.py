@@ -40,6 +40,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
+# Optional ngrok support for remote dev server access
+try:
+    from pyngrok import ngrok, conf
+    NGROK_AVAILABLE = True
+except ImportError:
+    NGROK_AVAILABLE = False
+    ngrok = None
+
 
 # =============================================================================
 # FastAPI App
@@ -1255,6 +1263,7 @@ class DevServerRequest(BaseModel):
     task_number: int
     run_id: Optional[str] = None  # Run/session ID - a task can have multiple runs
     dev_script: Optional[str] = None  # Custom script, e.g. "cd frontend && npm run dev --port {port}"
+    tunnel: Optional[bool] = False  # Create ngrok tunnel for remote access
 
 
 class OpenInEditorRequest(BaseModel):
@@ -1265,6 +1274,40 @@ class OpenInEditorRequest(BaseModel):
 # Track running dev servers by run_id (or task_number as fallback)
 _running_dev_servers: Dict[str, dict] = {}
 BASE_DEV_PORT = 6000
+
+# Track ngrok tunnels by run_id
+_ngrok_tunnels: Dict[str, object] = {}
+
+
+def start_ngrok_tunnel(port: int, run_id: str) -> Optional[str]:
+    """Start an ngrok tunnel for the given port. Returns public URL or None."""
+    if not NGROK_AVAILABLE:
+        print("[Ngrok] pyngrok not installed - tunnel not available")
+        return None
+
+    try:
+        # Check if ngrok authtoken is configured
+        # Users should run: ngrok config add-authtoken <token>
+        tunnel = ngrok.connect(port, "http")
+        public_url = tunnel.public_url
+        _ngrok_tunnels[run_id] = tunnel
+        print(f"[Ngrok] Tunnel started for port {port}: {public_url}")
+        return public_url
+    except Exception as e:
+        print(f"[Ngrok] Failed to start tunnel: {e}")
+        return None
+
+
+def stop_ngrok_tunnel(run_id: str):
+    """Stop ngrok tunnel for the given run_id."""
+    if run_id in _ngrok_tunnels:
+        try:
+            tunnel = _ngrok_tunnels[run_id]
+            ngrok.disconnect(tunnel.public_url)
+            del _ngrok_tunnels[run_id]
+            print(f"[Ngrok] Tunnel stopped for run {run_id}")
+        except Exception as e:
+            print(f"[Ngrok] Failed to stop tunnel: {e}")
 
 # Database path for persisting dev server state
 _DB_PATH = Path(__file__).parent.parent / ".branch_monkey" / "data.db"
@@ -1731,10 +1774,19 @@ async def start_dev_server(request: DevServerRequest):
         # Update proxy to point to this server
         set_proxy_target(info["port"], run_id)
         proxy_status = get_proxy_status()
+
+        # Create tunnel if requested and not already created
+        tunnel_url = info.get("tunnel_url")
+        if request.tunnel and not tunnel_url:
+            tunnel_url = start_ngrok_tunnel(info["port"], run_id)
+            if tunnel_url:
+                info["tunnel_url"] = tunnel_url
+
         return {
             "port": info["port"],
             "url": f"http://localhost:{info['port']}",
             "proxyUrl": proxy_status["proxyUrl"],
+            "tunnelUrl": tunnel_url,
             "runId": run_id,
             "status": "already_running"
         }
@@ -1801,7 +1853,8 @@ async def start_dev_server(request: DevServerRequest):
         "task_number": task_number,
         "run_id": run_id,
         "worktree_path": str(worktree_path),
-        "started_at": datetime.now().isoformat()
+        "started_at": datetime.now().isoformat(),
+        "tunnel_url": None
     }
 
     # Persist to database for recovery after restart
@@ -1809,6 +1862,13 @@ async def start_dev_server(request: DevServerRequest):
 
     # Wait for server to start
     await asyncio.sleep(3)
+
+    # Create ngrok tunnel if requested
+    tunnel_url = None
+    if request.tunnel:
+        tunnel_url = start_ngrok_tunnel(port, run_id)
+        if tunnel_url:
+            _running_dev_servers[run_id]["tunnel_url"] = tunnel_url
 
     # Set proxy target to this server
     set_proxy_target(port, run_id)
@@ -1818,6 +1878,7 @@ async def start_dev_server(request: DevServerRequest):
         "port": port,
         "url": f"http://localhost:{port}",
         "proxyUrl": proxy_status["proxyUrl"],
+        "tunnelUrl": tunnel_url,
         "runId": run_id,
         "status": "started"
     }
@@ -1836,6 +1897,7 @@ def list_dev_servers():
             "port": info["port"],
             "url": f"http://localhost:{info['port']}",
             "proxyUrl": proxy_status["proxyUrl"] if is_active else None,
+            "tunnelUrl": info.get("tunnel_url"),
             "isActive": is_active,
             "startedAt": info["started_at"],
             "worktreePath": info.get("worktree_path")
@@ -1913,6 +1975,10 @@ def stop_dev_server_endpoint(run_id: str):
         raise HTTPException(status_code=404, detail="Server not found")
 
     info = _running_dev_servers[run_id]
+
+    # Stop ngrok tunnel if exists
+    stop_ngrok_tunnel(run_id)
+
     try:
         os.killpg(os.getpgid(info["process"].pid), signal.SIGTERM)
     except Exception:

@@ -331,6 +331,7 @@ class RelayClient:
 
             self.channel.on_broadcast("request", on_request)
             self.channel.on_broadcast("stream_request", on_request)
+            self.channel.on_broadcast("stream_start", on_request)
             self.channel.on_broadcast("ping", lambda _: self._send_pong())
             self.channel.on_broadcast("disconnect", on_disconnect)
 
@@ -608,16 +609,88 @@ class RelayClient:
     async def _handle_message(self, payload: Dict[str, Any]):
         """Handle incoming message from cloud."""
         try:
-            msg_type = payload.get("type", "request")
-            print(f"[Relay] Received {msg_type}: {payload.get('method', '')} {payload.get('path', '')}")
+            # The broadcast payload may be nested: { event: "...", payload: { actual data } }
+            # or flat: { actual data }
+            actual_payload = payload.get("payload", payload) if isinstance(payload, dict) else payload
 
-            if msg_type in ("request", "stream_request"):
-                response = await self._execute_local_request(payload)
+            msg_type = actual_payload.get("type", "request")
+            print(f"[Relay] Received {msg_type}: {actual_payload.get('method', '')} {actual_payload.get('path', '')}")
+
+            if msg_type == "stream_start":
+                # Start SSE streaming for an agent
+                asyncio.create_task(self._handle_stream_start(actual_payload))
+            elif msg_type in ("request", "stream_request"):
+                response = await self._execute_local_request(actual_payload)
                 await self.channel.send_broadcast("response", response)
                 print(f"[Relay] Sent response: status={response.get('status')}")
 
         except Exception as e:
             print(f"[Relay] Error handling message: {e}")
+
+    async def _handle_stream_start(self, payload: Dict[str, Any]):
+        """Handle SSE stream start request - connect to local SSE and forward events."""
+        stream_id = payload.get("stream_id")
+        agent_id = payload.get("agent_id")
+
+        if not stream_id or not agent_id:
+            print(f"[Relay] Stream start missing stream_id or agent_id")
+            return
+
+        url = f"http://127.0.0.1:{self.local_port}/api/local-claude/agents/{agent_id}/stream"
+        print(f"[Relay] Starting SSE stream for agent {agent_id}, stream_id={stream_id}")
+
+        try:
+            async with httpx.AsyncClient(timeout=None) as client:
+                async with client.stream("GET", url) as response:
+                    if response.status_code != 200:
+                        await self.channel.send_broadcast("stream_event", {
+                            "stream_id": stream_id,
+                            "type": "error",
+                            "error": f"Failed to connect to local SSE: {response.status_code}"
+                        })
+                        return
+
+                    print(f"[Relay] Connected to local SSE for agent {agent_id}")
+                    event_count = 0
+
+                    async for line in response.aiter_lines():
+                        if not line or line.startswith(":"):
+                            # Empty line or comment (heartbeat)
+                            continue
+
+                        if line.startswith("data: "):
+                            data = line[6:]  # Remove "data: " prefix
+                            try:
+                                event = json.loads(data)
+                                event_count += 1
+                                event_type = event.get("type", "unknown")
+                                if event_count <= 5 or event_count % 10 == 0:
+                                    print(f"[Relay] Forwarding event #{event_count} type={event_type} for agent {agent_id}")
+                                # Forward the event through Realtime
+                                await self.channel.send_broadcast("stream_event", {
+                                    "stream_id": stream_id,
+                                    "event": event
+                                })
+
+                                # Check for exit event
+                                if event.get("type") == "exit":
+                                    print(f"[Relay] Stream ended for agent {agent_id}")
+                                    break
+
+                            except json.JSONDecodeError:
+                                # Forward raw data if not JSON
+                                await self.channel.send_broadcast("stream_event", {
+                                    "stream_id": stream_id,
+                                    "raw": data
+                                })
+
+        except Exception as e:
+            print(f"[Relay] Stream error for agent {agent_id}: {e}")
+            await self.channel.send_broadcast("stream_event", {
+                "stream_id": stream_id,
+                "type": "error",
+                "error": str(e)
+            })
 
     async def _execute_local_request(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """Execute request on local server and return response."""
