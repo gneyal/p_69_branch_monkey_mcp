@@ -1479,27 +1479,18 @@
         },
 
         async fetchAppConfig() {
-          // Try to fetch app name from the frontend dev server (via proxy or direct)
-          const urls = [
-            'http://localhost:5177/api/config',  // Proxy
-            'http://localhost:5176/api/config',  // Main dev server
-            'https://p-63-branch-monkey.pages.dev/api/config'  // Cloud
-          ];
-          for (const url of urls) {
-            try {
-              const res = await fetch(url, { timeout: 2000 });
-              if (res.ok) {
-                const data = await res.json();
-                if (data.appNameDisplay || data.appNameTitle || data.appName) {
-                  this.appName = data.appNameDisplay || data.appNameTitle || data.appName;
-                  return;
-                }
+          // Try to fetch app name from the cloud, default to 'Branch Monkey'
+          try {
+            const res = await fetch('https://p-63-branch-monkey.pages.dev/api/config');
+            if (res.ok) {
+              const data = await res.json();
+              if (data.appNameDisplay || data.appNameTitle || data.appName) {
+                this.appName = data.appNameDisplay || data.appNameTitle || data.appName;
               }
-            } catch (e) {
-              // Try next URL
             }
+          } catch (e) {
+            // Keep default 'Branch Monkey'
           }
-          // Keep default 'Branch Monkey' if all fetches fail
         },
 
         async refreshAll() {
