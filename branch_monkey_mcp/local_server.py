@@ -36,7 +36,7 @@ from urllib.parse import urlparse
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 
@@ -995,6 +995,24 @@ def check_claude_installed():
 def health_check():
     """Health check endpoint."""
     return {"status": "ok", "service": "branch-monkey-relay"}
+
+
+def _get_dashboard_response():
+    """Return the dashboard HTML file response."""
+    dashboard_path = Path(__file__).parent / "static" / "dashboard.html"
+    return FileResponse(dashboard_path, media_type="text/html")
+
+
+@app.get("/")
+def serve_root():
+    """Serve the dashboard at root."""
+    return _get_dashboard_response()
+
+
+@app.get("/dashboard")
+def serve_dashboard():
+    """Serve the dashboard HTML."""
+    return _get_dashboard_response()
 
 
 @app.get("/api/status")
