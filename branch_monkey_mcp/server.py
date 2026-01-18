@@ -247,7 +247,24 @@ except ImportError:
     print("Error: mcp package not installed.", file=sys.stderr)
     sys.exit(1)
 
-API_URL = os.environ.get("BRANCH_MONKEY_API_URL", "https://p-63-branch-monkey.pages.dev")
+# Fallback URL if config fetch fails
+FALLBACK_API_URL = "https://p-63-branch-monkey.pages.dev"
+
+def _fetch_api_url() -> str:
+    """Fetch API URL from /api/config endpoint."""
+    try:
+        import httpx
+        response = httpx.get(f"{FALLBACK_API_URL}/api/config", timeout=5.0)
+        if response.status_code == 200:
+            config = response.json()
+            app_domain = config.get("appDomain")
+            if app_domain:
+                return f"https://{app_domain}"
+    except Exception:
+        pass
+    return FALLBACK_API_URL
+
+API_URL = os.environ.get("BRANCH_MONKEY_API_URL") or _fetch_api_url()
 API_KEY = os.environ.get("BRANCH_MONKEY_API_KEY")
 ORG_ID: Optional[str] = None  # Set after auth
 REQUEST_TIMEOUT = 30

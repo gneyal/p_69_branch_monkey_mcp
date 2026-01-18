@@ -32,8 +32,32 @@ import httpx
 CONFIG_DIR = Path.home() / ".branch-monkey"
 TOKEN_FILE = CONFIG_DIR / "relay_token.json"
 
-# Cloud API URL
-DEFAULT_CLOUD_URL = "https://p-63-branch-monkey.pages.dev"
+# Cloud API URL - fallback if /api/config fetch fails
+FALLBACK_CLOUD_URL = "https://p-63-branch-monkey.pages.dev"
+
+
+def fetch_cloud_url_from_config(fallback_url: str = FALLBACK_CLOUD_URL) -> str:
+    """
+    Fetch the cloud URL from the /api/config endpoint.
+    This makes the relay domain-agnostic by reading the configured appDomain.
+    """
+    try:
+        import httpx
+        response = httpx.get(f"{fallback_url}/api/config", timeout=5.0)
+        if response.status_code == 200:
+            config = response.json()
+            app_domain = config.get("appDomain")
+            if app_domain:
+                cloud_url = f"https://{app_domain}"
+                print(f"[Relay] Using domain from config: {app_domain}")
+                return cloud_url
+    except Exception as e:
+        print(f"[Relay] Could not fetch config: {e}")
+    return fallback_url
+
+
+# Will be resolved at runtime
+DEFAULT_CLOUD_URL = FALLBACK_CLOUD_URL
 
 
 class RelayClient:
@@ -575,13 +599,16 @@ def main():
 
     import argparse
 
+    # Resolve cloud URL dynamically from /api/config
+    resolved_cloud_url = fetch_cloud_url_from_config(FALLBACK_CLOUD_URL)
+
     parser = argparse.ArgumentParser(
         description="Connect your machine to Branch Monkey Cloud"
     )
     parser.add_argument(
         "--cloud-url",
-        default=os.environ.get("BRANCH_MONKEY_CLOUD_URL", DEFAULT_CLOUD_URL),
-        help=f"Cloud URL (default: {DEFAULT_CLOUD_URL})"
+        default=os.environ.get("BRANCH_MONKEY_CLOUD_URL", resolved_cloud_url),
+        help=f"Cloud URL (default: auto-detected from config)"
     )
     parser.add_argument(
         "--port",

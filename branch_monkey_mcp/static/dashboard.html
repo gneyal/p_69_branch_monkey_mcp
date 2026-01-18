@@ -294,7 +294,7 @@
                 </div>
                 <div class="text-left">
                   <div class="font-semibold text-lg" x-text="appName + ' Cloud'"></div>
-                  <div class="text-xs text-apple-secondary">p-63-branch-monkey.pages.dev</div>
+                  <div class="text-xs text-apple-secondary" x-text="appDomain || cloudUrl?.replace('https://', '') || 'p-63-branch-monkey.pages.dev'"></div>
                 </div>
               </div>
               <div class="flex items-center justify-center gap-2 mt-3">
@@ -1206,7 +1206,7 @@
                 <div class="flex items-center gap-3">
                   <div class="w-24 text-center">
                     <div class="bg-apple-blue/20 text-apple-blue text-[10px] font-medium px-2 py-1 rounded-lg">Cloud UI</div>
-                    <div class="text-[10px] text-apple-tertiary mt-1">p-63-branch-monkey.pages.dev</div>
+                    <div class="text-[10px] text-apple-tertiary mt-1" x-text="appDomain || 'cloud'"></div>
                   </div>
                   <div class="flex-1 border-t border-dashed border-apple-yellow/50 relative">
                     <span class="absolute -top-2.5 left-1/2 -translate-x-1/2 text-[10px] text-apple-yellow bg-black/50 px-2">Supabase Realtime</span>
@@ -1330,7 +1330,7 @@
               </div>
               <div>
                 <div class="text-apple-secondary mb-1">Cloud API</div>
-                <code class="mono text-apple-blue">p-63-branch-monkey.pages.dev</code>
+                <code class="mono text-apple-blue" x-text="appDomain || 'cloud'"></code>
               </div>
               <div>
                 <div class="text-apple-secondary mb-1">Content-Type</div>
@@ -1443,8 +1443,10 @@
   <script>
     function dashboard() {
       return {
-        // Configurable app name
+        // Configurable app name (fetched from cloud)
         appName: 'Branch Monkey',
+        appDomain: null,
+        cloudUrl: null,
 
         connected: false,
         claudeInstalled: false,
@@ -1485,11 +1487,20 @@
         async fetchAppConfig() {
           // Try to fetch app name from the cloud, default to 'Branch Monkey'
           try {
-            const res = await fetch('https://p-63-branch-monkey.pages.dev/api/config');
+            // First get the cloud URL from relay status
+            const relayRes = await fetch('/api/relay/status');
+            const relayData = await relayRes.json();
+            const cloudUrl = relayData.cloud_url || 'https://p-63-branch-monkey.pages.dev';
+            this.cloudUrl = cloudUrl;
+
+            const res = await fetch(`${cloudUrl}/api/config`);
             if (res.ok) {
               const data = await res.json();
               if (data.appNameDisplay || data.appNameTitle || data.appName) {
                 this.appName = data.appNameDisplay || data.appNameTitle || data.appName;
+              }
+              if (data.appDomain) {
+                this.appDomain = data.appDomain;
               }
             }
           } catch (e) {
@@ -1552,9 +1563,10 @@
         async checkCloudStatus() {
           try {
             this.cloudReachable = null;
+            const cloudUrl = this.cloudUrl || 'https://p-63-branch-monkey.pages.dev';
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 5000);
-            const res = await fetch('https://p-63-branch-monkey.pages.dev/api/health', {
+            const res = await fetch(`${cloudUrl}/api/health`, {
               method: 'GET',
               mode: 'cors',
               signal: controller.signal
