@@ -1469,12 +1469,37 @@
         directoryError: null,
 
         async init() {
+          await this.fetchAppConfig();
           document.title = this.appName;
           await this.refreshAll();
           this.checkRelayStatus();
           this.refreshWorkingDirectory();
           setInterval(() => this.refreshAll(), 5000);
           setInterval(() => this.checkRelayStatus(), 10000);
+        },
+
+        async fetchAppConfig() {
+          // Try to fetch app name from the frontend dev server (via proxy or direct)
+          const urls = [
+            'http://localhost:5177/api/config',  // Proxy
+            'http://localhost:5176/api/config',  // Main dev server
+            'https://p-63-branch-monkey.pages.dev/api/config'  // Cloud
+          ];
+          for (const url of urls) {
+            try {
+              const res = await fetch(url, { timeout: 2000 });
+              if (res.ok) {
+                const data = await res.json();
+                if (data.appNameDisplay || data.appNameTitle || data.appName) {
+                  this.appName = data.appNameDisplay || data.appNameTitle || data.appName;
+                  return;
+                }
+              }
+            } catch (e) {
+              // Try next URL
+            }
+          }
+          // Keep default 'Branch Monkey' if all fetches fail
         },
 
         async refreshAll() {
