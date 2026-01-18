@@ -792,6 +792,7 @@ class LocalAgentManager:
                 "status": a.status,
                 "type": "local",
                 "branch": a.branch,
+                "worktree_path": a.worktree_path,
                 "created_at": a.created_at.isoformat(),
                 "last_activity": a.last_activity.isoformat(),
                 "session_id": a.session_id,
