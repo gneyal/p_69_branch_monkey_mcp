@@ -917,17 +917,56 @@ def main():
 
     args = parser.parse_args()
 
-    # Resolve working directory to absolute path
-    working_dir = os.path.abspath(args.dir)
+    # Prompt for working directory if not explicitly provided via --dir
+    if args.dir == os.getcwd() and sys.stdin.isatty():
+        # Enable tab completion for paths
+        try:
+            import readline
+            import glob as glob_module
+
+            def path_completer(text, state):
+                # Expand ~ to home directory
+                if text.startswith("~"):
+                    text = os.path.expanduser(text)
+                # Add wildcard for completion
+                pattern = text + "*"
+                matches = glob_module.glob(pattern)
+                # Add trailing slash to directories
+                matches = [m + "/" if os.path.isdir(m) else m for m in matches]
+                if state < len(matches):
+                    return matches[state]
+                return None
+
+            readline.set_completer(path_completer)
+            readline.set_completer_delims(' \t\n;')
+            readline.parse_and_bind("tab: complete")
+        except ImportError:
+            pass  # readline not available on all platforms
+
+        print(f"\n[Relay] Enter working directory for agent execution")
+        print(f"        (press Enter to use current: {os.getcwd()})")
+        user_input = input("        Working directory: ").strip()
+        if user_input:
+            working_dir = os.path.abspath(os.path.expanduser(user_input))
+        else:
+            working_dir = os.getcwd()
+    else:
+        working_dir = os.path.abspath(args.dir)
+
+    # Validate the directory exists
+    if not os.path.isdir(working_dir):
+        print(f"[Relay] Error: Directory does not exist: {working_dir}")
+        sys.exit(1)
 
     # Set up MCP config unless --no-mcp is specified
     if not args.no_mcp:
         setup_mcp_config(working_dir, args.cloud_url)
 
-    print(f"\n🐵 Branch Monkey Relay")
-    print(f"   Cloud: {args.cloud_url}")
+    print(f"\nKompany Relay")
+    print(f"   Kompany Cloud: {args.cloud_url}")
     print(f"   Local port: {args.port}")
     print(f"   Working dir: {working_dir}")
+    print(f"   Dashboard: http://localhost:{args.port}/")
 
     # Start local agent server unless --no-server is specified
     if not args.no_server:
