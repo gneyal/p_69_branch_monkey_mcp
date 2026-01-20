@@ -948,7 +948,9 @@ async def execute_task(request: TaskExecuteRequest):
     The task is executed in the specified local_path.
     """
     # Use local_path if provided, otherwise fall back to default working dir
-    working_dir = request.local_path or DEFAULT_WORKING_DIR
+    print(f"[TaskExecute] Received local_path from request: {request.local_path}")
+    working_dir = request.local_path or get_default_working_dir()
+    print(f"[TaskExecute] Resolved working_dir: {working_dir}")
 
     # Verify the directory exists
     if working_dir and not os.path.isdir(working_dir):
