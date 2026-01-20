@@ -28,6 +28,7 @@ import random
 import socket
 import sys
 import time
+import uuid
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
@@ -55,6 +56,7 @@ class ConnectionState(Enum):
 # Config file location
 CONFIG_DIR = Path.home() / ".branch-monkey"
 TOKEN_FILE = CONFIG_DIR / "relay_token.json"
+MACHINE_ID_FILE = CONFIG_DIR / "machine_id"
 
 # Cloud API URL - fallback if /api/config fetch fails
 FALLBACK_CLOUD_URL = "https://p-63-branch-monkey.pages.dev"
@@ -107,7 +109,7 @@ class RelayClient:
         self.cloud_url = cloud_url.rstrip("/")
         self.local_port = local_port
         self.machine_name = machine_name or self._get_machine_name()
-        self.machine_id = f"{self.machine_name}-{os.getpid()}"
+        self.machine_id = self._get_stable_machine_id()
 
         # Auth data
         self.access_token: Optional[str] = None
@@ -145,6 +147,17 @@ class RelayClient:
     def _get_machine_name(self) -> str:
         """Generate a human-readable machine name."""
         return socket.gethostname()
+
+    def _get_stable_machine_id(self) -> str:
+        """Get or create a stable machine ID that persists across restarts."""
+        if MACHINE_ID_FILE.exists():
+            return MACHINE_ID_FILE.read_text().strip()
+
+        # Generate once, reuse forever
+        machine_id = f"{self.machine_name}-{uuid.uuid4().hex[:8]}"
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        MACHINE_ID_FILE.write_text(machine_id)
+        return machine_id
 
     def _load_token(self) -> Optional[Dict[str, Any]]:
         """Load cached token and config from file."""
