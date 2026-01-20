@@ -1067,6 +1067,16 @@ async def stream_output(agent_id: str, request: Request):
             init_event = {"type": "connected", "agentId": agent_id, "status": agent['status']}
             yield f"data: {json.dumps(init_event)}\n\n"
 
+            # If agent is already paused/completed, send that status immediately
+            if agent['status'] in ('paused', 'completed', 'failed'):
+                paused_event = {
+                    "type": "paused",
+                    "exit_code": agent.get('exit_code'),
+                    "session_id": agent.get('session_id'),
+                    "can_resume": agent.get('can_resume', True)
+                }
+                yield f"data: {json.dumps(paused_event)}\n\n"
+
             while True:
                 if await request.is_disconnected():
                     break
