@@ -926,8 +926,62 @@ class CreateAgentRequest(BaseModel):
     prompt: Optional[str] = None
 
 
+class TaskExecuteRequest(BaseModel):
+    """Request from relay to execute a task in a specific local_path."""
+    task_id: str
+    task_number: int
+    title: str
+    description: Optional[str] = None
+    local_path: Optional[str] = None
+    repository_url: Optional[str] = None
+
+
 class InputRequest(BaseModel):
     input: str
+
+
+@app.post("/api/local-claude/task-execute")
+async def execute_task(request: TaskExecuteRequest):
+    """
+    Execute a task dispatched from the cloud.
+    This endpoint is called by the relay when a user triggers a task run.
+    The task is executed in the specified local_path.
+    """
+    # Use local_path if provided, otherwise fall back to default working dir
+    working_dir = request.local_path or DEFAULT_WORKING_DIR
+
+    # Verify the directory exists
+    if working_dir and not os.path.isdir(working_dir):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Working directory does not exist: {working_dir}"
+        )
+
+    print(f"[TaskExecute] Starting task #{request.task_number}: {request.title}")
+    print(f"[TaskExecute] Working directory: {working_dir}")
+
+    # Build the prompt with task info
+    prompt = f"Work on task #{request.task_number}: {request.title}"
+    if request.description:
+        prompt += f"\n\n{request.description}"
+
+    # Create and start the agent
+    result = await agent_manager.create(
+        task_id=request.task_id,
+        task_number=request.task_number,
+        task_title=request.title,
+        task_description=request.description,
+        working_dir=working_dir,
+        prompt=prompt
+    )
+
+    return {
+        "success": True,
+        "agent_id": result.get("id"),
+        "task_number": request.task_number,
+        "working_dir": working_dir,
+        "message": f"Task #{request.task_number} started in {working_dir}"
+    }
 
 
 @app.post("/api/local-claude/agents")
