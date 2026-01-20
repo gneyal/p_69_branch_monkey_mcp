@@ -982,6 +982,9 @@ async def execute_task(request: TaskExecuteRequest):
         "agent_id": result.get("id"),
         "task_number": request.task_number,
         "working_dir": working_dir,
+        "branch": result.get("branch"),
+        "worktree_path": result.get("worktree_path"),
+        "is_worktree": result.get("is_worktree", False),
         "message": f"Task #{request.task_number} started in {working_dir}"
     }
 
