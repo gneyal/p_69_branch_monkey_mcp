@@ -930,9 +930,23 @@ def main():
 
     args = parser.parse_args()
 
-    # Prompt for working directory if not explicitly provided via --dir
-    if args.dir == os.getcwd() and sys.stdin.isatty():
-        # Enable tab completion for paths
+    # Check for working directory in this order:
+    # 1. --dir flag (if explicitly provided, not default)
+    # 2. BRANCH_MONKEY_WORKING_DIR environment variable
+    # 3. Interactive prompt (if TTY available)
+    # 4. Current directory (fallback)
+    env_working_dir = os.environ.get("BRANCH_MONKEY_WORKING_DIR")
+    dir_explicitly_set = args.dir != os.getcwd()
+
+    if dir_explicitly_set:
+        # --dir was explicitly provided
+        working_dir = os.path.abspath(args.dir)
+    elif env_working_dir:
+        # Use environment variable
+        working_dir = os.path.abspath(os.path.expanduser(env_working_dir))
+        print(f"[Relay] Using working directory from BRANCH_MONKEY_WORKING_DIR: {working_dir}")
+    elif sys.stdin.isatty():
+        # Interactive prompt with tab completion
         try:
             import readline
             import glob as glob_module
@@ -964,7 +978,8 @@ def main():
         else:
             working_dir = os.getcwd()
     else:
-        working_dir = os.path.abspath(args.dir)
+        # Non-interactive, use current directory
+        working_dir = os.getcwd()
 
     # Validate the directory exists
     if not os.path.isdir(working_dir):
