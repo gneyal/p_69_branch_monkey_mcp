@@ -933,8 +933,7 @@ def main():
     # Check for working directory in this order:
     # 1. --dir flag (if explicitly provided, not default)
     # 2. BRANCH_MONKEY_WORKING_DIR environment variable
-    # 3. Interactive prompt (if TTY available)
-    # 4. Current directory (fallback)
+    # 3. Current directory (default)
     env_working_dir = os.environ.get("BRANCH_MONKEY_WORKING_DIR")
     dir_explicitly_set = args.dir != os.getcwd()
 
@@ -945,40 +944,8 @@ def main():
         # Use environment variable
         working_dir = os.path.abspath(os.path.expanduser(env_working_dir))
         print(f"[Relay] Using working directory from BRANCH_MONKEY_WORKING_DIR: {working_dir}")
-    elif sys.stdin.isatty():
-        # Interactive prompt with tab completion
-        try:
-            import readline
-            import glob as glob_module
-
-            def path_completer(text, state):
-                # Expand ~ to home directory
-                if text.startswith("~"):
-                    text = os.path.expanduser(text)
-                # Add wildcard for completion
-                pattern = text + "*"
-                matches = glob_module.glob(pattern)
-                # Add trailing slash to directories
-                matches = [m + "/" if os.path.isdir(m) else m for m in matches]
-                if state < len(matches):
-                    return matches[state]
-                return None
-
-            readline.set_completer(path_completer)
-            readline.set_completer_delims(' \t\n;')
-            readline.parse_and_bind("tab: complete")
-        except ImportError:
-            pass  # readline not available on all platforms
-
-        print(f"\n[Relay] Enter working directory for agent execution")
-        print(f"        (press Enter to use current: {os.getcwd()})")
-        user_input = input("        Working directory: ").strip()
-        if user_input:
-            working_dir = os.path.abspath(os.path.expanduser(user_input))
-        else:
-            working_dir = os.getcwd()
     else:
-        # Non-interactive, use current directory
+        # Use current directory
         working_dir = os.getcwd()
 
     # Validate the directory exists
