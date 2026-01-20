@@ -28,6 +28,7 @@ import random
 import socket
 import sys
 import time
+import webbrowser
 import uuid
 from datetime import datetime
 from enum import Enum
@@ -240,6 +241,14 @@ class RelayClient:
             print(f"\n  Or go to {self.cloud_url}/approve")
             print(f"  and enter code: {user_code}")
             print(f"{'='*50}\n")
+
+            # Auto-open browser for authentication
+            try:
+                webbrowser.open(verification_uri)
+                print(f"[Relay] Opening browser for authentication...")
+            except Exception:
+                pass  # Browser open failed, user can manually visit URL
+
             print(f"[Relay] Waiting for approval (expires in {expires_in//60} minutes)...")
 
             # Poll for approval
