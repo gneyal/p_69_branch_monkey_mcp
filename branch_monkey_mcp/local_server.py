@@ -1781,12 +1781,24 @@ def merge_worktree_branch(request: MergeRequest):
                 )
             raise HTTPException(status_code=500, detail=error_msg)
 
+        # Push to origin after successful merge
+        push_result = subprocess.run(
+            ["git", "push", "origin", target],
+            cwd=git_root,
+            capture_output=True,
+            text=True
+        )
+        pushed = push_result.returncode == 0
+        push_error = None if pushed else push_result.stderr
+
         return {
             "success": True,
-            "message": f"Successfully merged {branch_to_merge} into {target}",
+            "message": f"Successfully merged {branch_to_merge} into {target}" + (" and pushed to origin" if pushed else ""),
             "output": result.stdout,
             "target_branch": target,
-            "actual_branch": branch_to_merge if branch_to_merge != request.branch else None
+            "actual_branch": branch_to_merge if branch_to_merge != request.branch else None,
+            "pushed": pushed,
+            "push_error": push_error
         }
 
     except HTTPException:
