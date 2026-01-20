@@ -1852,25 +1852,33 @@ async def start_dev_server(request: DevServerRequest):
     # Check if already running for this run
     if run_id in _running_dev_servers:
         info = _running_dev_servers[run_id]
-        # Update proxy to point to this server
-        set_proxy_target(info["port"], run_id)
-        proxy_status = get_proxy_status()
 
-        # Create tunnel if requested and not already created
-        tunnel_url = info.get("tunnel_url")
-        if request.tunnel and not tunnel_url:
-            tunnel_url = start_ngrok_tunnel(info["port"], run_id)
-            if tunnel_url:
-                info["tunnel_url"] = tunnel_url
+        # Verify the process is actually still running by checking the port
+        if _is_port_in_use(info["port"]):
+            # Update proxy to point to this server
+            set_proxy_target(info["port"], run_id)
+            proxy_status = get_proxy_status()
 
-        return {
-            "port": info["port"],
-            "url": f"http://localhost:{info['port']}",
-            "proxyUrl": proxy_status["proxyUrl"],
-            "tunnelUrl": tunnel_url,
-            "runId": run_id,
-            "status": "already_running"
-        }
+            # Create tunnel if requested and not already created
+            tunnel_url = info.get("tunnel_url")
+            if request.tunnel and not tunnel_url:
+                tunnel_url = start_ngrok_tunnel(info["port"], run_id)
+                if tunnel_url:
+                    info["tunnel_url"] = tunnel_url
+
+            return {
+                "port": info["port"],
+                "url": f"http://localhost:{info['port']}",
+                "proxyUrl": proxy_status["proxyUrl"],
+                "tunnelUrl": tunnel_url,
+                "runId": run_id,
+                "status": "already_running"
+            }
+        else:
+            # Process died, clean up stale entry and start fresh
+            print(f"[DevServer] Cleaning up stale entry for {run_id} (port {info['port']} not in use)")
+            _delete_dev_server_from_db(run_id)
+            del _running_dev_servers[run_id]
 
     # Find worktree
     worktree_path = find_worktree_path(task_number)
