@@ -1769,8 +1769,9 @@ def merge_worktree_branch(request: MergeRequest):
 
             if status_result.stdout.strip():
                 subprocess.run(["git", "add", "-A"], cwd=worktree_path, check=True)
+                commit_msg = f"Task #{request.task_number}: Agent changes\n\nCo-Authored-By: Kompany.dev via Claude Code"
                 subprocess.run(
-                    ["git", "commit", "-m", f"Task #{request.task_number}: Agent changes"],
+                    ["git", "commit", "-m", commit_msg],
                     cwd=worktree_path,
                     capture_output=True
                 )

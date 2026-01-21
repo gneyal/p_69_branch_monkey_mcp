@@ -777,7 +777,9 @@ cd .worktrees/task-{task_id}
 **Step 3: Commit & Push**
 ```bash
 git add .
-git commit -m "Task #{task_id}: description"
+git commit -m "Task #{task_id}: description
+
+Co-Authored-By: Kompany.dev via Claude Code"
 git push -u origin task/{task_id}-short-description
 ```
 
