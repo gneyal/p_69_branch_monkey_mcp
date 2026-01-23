@@ -520,7 +520,8 @@ class LocalAgentManager:
         task_title: str = "",
         task_description: Optional[str] = None,
         working_dir: Optional[str] = None,
-        prompt: Optional[str] = None
+        prompt: Optional[str] = None,
+        skip_branch: bool = False
     ) -> dict:
         """Create and start a new local Claude Code agent."""
 
@@ -538,8 +539,8 @@ class LocalAgentManager:
         branch_created = False
         worktree_path = None
 
-        # Handle git worktree if in a git repo with task number
-        if task_number and is_git_repo(repo_dir):
+        # Handle git worktree if in a git repo with task number (unless skip_branch is set)
+        if task_number and is_git_repo(repo_dir) and not skip_branch:
             branch = generate_branch_name(task_number, task_title, agent_id)
             result = create_worktree(repo_dir, branch, task_number, agent_id)
 
@@ -924,6 +925,7 @@ class CreateAgentRequest(BaseModel):
     description: Optional[str] = None
     working_dir: Optional[str] = None
     prompt: Optional[str] = None
+    skip_branch: bool = False
 
 
 class TaskExecuteRequest(BaseModel):
@@ -998,7 +1000,8 @@ async def create_agent(request: CreateAgentRequest):
         task_title=request.title,
         task_description=request.description,
         working_dir=request.working_dir,
-        prompt=request.prompt
+        prompt=request.prompt,
+        skip_branch=request.skip_branch
     )
 
 
