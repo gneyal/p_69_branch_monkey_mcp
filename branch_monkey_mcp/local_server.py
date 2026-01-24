@@ -1067,6 +1067,10 @@ async def execute_task(request: TaskExecuteRequest):
 @app.post("/api/local-claude/agents")
 async def create_agent(request: CreateAgentRequest):
     """Create and start a new local Claude Code agent."""
+    print(f"[CreateAgent] Received: working_dir={request.working_dir}, skip_branch={request.skip_branch}")
+    print(f"[CreateAgent] Default working dir would be: {get_default_working_dir()}")
+    effective_dir = request.working_dir or get_default_working_dir()
+    print(f"[CreateAgent] Using effective working_dir: {effective_dir}")
     return await agent_manager.create(
         task_id=request.task_id,
         task_number=request.task_number,
