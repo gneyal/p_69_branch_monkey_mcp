@@ -536,11 +536,10 @@ class LocalAgentManager:
                     continue
 
             # Check for stale agents (no activity for a while)
-            if agent.started_at:
+            if agent.created_at:
                 try:
-                    started = datetime.fromisoformat(agent.started_at)
-                    if (now - started).total_seconds() > self.STALE_TIMEOUT:
-                        print(f"[LocalAgent] Agent {agent_id} is stale (started {agent.started_at})")
+                    if (now - agent.created_at).total_seconds() > self.STALE_TIMEOUT:
+                        print(f"[LocalAgent] Agent {agent_id} is stale (created {agent.created_at})")
                         stale_ids.append(agent_id)
                 except Exception:
                     pass
