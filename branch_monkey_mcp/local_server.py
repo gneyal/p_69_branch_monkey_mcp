@@ -1413,6 +1413,59 @@ def set_working_directory(request: WorkingDirectoryRequest):
     }
 
 
+@app.get("/api/git-status")
+def get_git_status(path: Optional[str] = None):
+    """Get git status for a directory (clean/dirty, uncommitted changes count)."""
+    work_dir = path or get_default_working_dir()
+
+    if not os.path.isdir(work_dir):
+        raise HTTPException(status_code=400, detail=f"Directory does not exist: {work_dir}")
+
+    git_root = get_git_root(work_dir)
+    if not git_root:
+        return {
+            "is_git_repo": False,
+            "path": work_dir
+        }
+
+    try:
+        # Get status --porcelain for machine-readable output
+        result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=work_dir,
+            capture_output=True,
+            text=True
+        )
+
+        changes = result.stdout.strip().split('\n') if result.stdout.strip() else []
+        staged = sum(1 for c in changes if c and c[0] in 'MADRC')
+        unstaged = sum(1 for c in changes if c and len(c) > 1 and c[1] in 'MADRC')
+        untracked = sum(1 for c in changes if c and c.startswith('??'))
+
+        # Get current branch
+        branch_result = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=work_dir,
+            capture_output=True,
+            text=True
+        )
+        current_branch = branch_result.stdout.strip() if branch_result.returncode == 0 else None
+
+        return {
+            "is_git_repo": True,
+            "path": work_dir,
+            "git_root": git_root,
+            "branch": current_branch,
+            "is_clean": len(changes) == 0,
+            "changes_count": len(changes),
+            "staged": staged,
+            "unstaged": unstaged,
+            "untracked": untracked
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get git status: {str(e)}")
+
+
 # =============================================================================
 # Merge and Dev Server Endpoints
 # =============================================================================
