@@ -509,9 +509,47 @@ class LocalAgent:
 class LocalAgentManager:
     """Manages local Claude Code agent instances."""
 
+    MAX_AGENTS = 10  # Maximum concurrent agents to prevent resource exhaustion
+    STALE_TIMEOUT = 3600  # Agents idle for 1 hour are considered stale
+
     def __init__(self):
         self._agents: Dict[str, LocalAgent] = {}
         self._output_tasks: Dict[str, asyncio.Task] = {}
+
+    def cleanup_stale_agents(self) -> int:
+        """Remove agents that are completed, failed, or stale. Returns count removed."""
+        now = datetime.now()
+        stale_ids = []
+
+        for agent_id, agent in self._agents.items():
+            # Remove completed/failed agents
+            if agent.status in ("completed", "failed", "stopped"):
+                stale_ids.append(agent_id)
+                continue
+
+            # Check if process is still running
+            if agent.process:
+                poll = agent.process.poll()
+                if poll is not None:
+                    # Process has exited
+                    stale_ids.append(agent_id)
+                    continue
+
+            # Check for stale agents (no activity for a while)
+            if agent.started_at:
+                try:
+                    started = datetime.fromisoformat(agent.started_at)
+                    if (now - started).total_seconds() > self.STALE_TIMEOUT:
+                        print(f"[LocalAgent] Agent {agent_id} is stale (started {agent.started_at})")
+                        stale_ids.append(agent_id)
+                except Exception:
+                    pass
+
+        for agent_id in stale_ids:
+            print(f"[LocalAgent] Cleaning up agent {agent_id}")
+            self.kill(agent_id)
+
+        return len(stale_ids)
 
     async def create(
         self,
@@ -524,6 +562,18 @@ class LocalAgentManager:
         skip_branch: bool = False
     ) -> dict:
         """Create and start a new local Claude Code agent."""
+
+        # Clean up stale agents first
+        cleaned = self.cleanup_stale_agents()
+        if cleaned > 0:
+            print(f"[LocalAgent] Cleaned up {cleaned} stale agents")
+
+        # Check max agent limit
+        if len(self._agents) >= self.MAX_AGENTS:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Maximum number of agents ({self.MAX_AGENTS}) reached. Kill some agents first."
+            )
 
         claude_path = shutil.which("claude")
         if not claude_path:
@@ -848,7 +898,32 @@ class LocalAgentManager:
         if not agent:
             return
 
-        if agent.pid:
+        print(f"[LocalAgent] Killing agent {agent_id}")
+
+        # Cancel output reading task first
+        if agent_id in self._output_tasks:
+            self._output_tasks[agent_id].cancel()
+            del self._output_tasks[agent_id]
+
+        # Close stdout pipe to release file descriptor
+        if agent.process and agent.process.stdout:
+            try:
+                agent.process.stdout.close()
+            except Exception:
+                pass
+
+        # Terminate the process
+        if agent.process:
+            try:
+                agent.process.terminate()
+                try:
+                    agent.process.wait(timeout=2)
+                except Exception:
+                    agent.process.kill()
+                    agent.process.wait(timeout=1)
+            except Exception:
+                pass
+        elif agent.pid:
             try:
                 os.kill(agent.pid, signal.SIGTERM)
                 try:
@@ -862,16 +937,14 @@ class LocalAgentManager:
                     os.kill(agent.pid, signal.SIGKILL)
                 except Exception:
                     pass
-            agent.status = "stopped"
 
-        if agent_id in self._output_tasks:
-            self._output_tasks[agent_id].cancel()
-            del self._output_tasks[agent_id]
+        agent.status = "stopped"
 
         if cleanup_worktree and agent.worktree_path and agent.repo_dir:
             remove_worktree(agent.repo_dir, agent.worktree_path)
 
         del self._agents[agent_id]
+        print(f"[LocalAgent] Agent {agent_id} killed, {len(self._agents)} agents remaining")
 
     def add_listener(self, agent_id: str) -> asyncio.Queue:
         """Add an output listener for streaming."""
@@ -1050,6 +1123,22 @@ def kill_agent(agent_id: str, cleanup_worktree: bool = False):
     """Kill an agent."""
     agent_manager.kill(agent_id, cleanup_worktree)
     return {"success": True}
+
+
+@app.post("/api/local-claude/agents/cleanup")
+def cleanup_agents():
+    """Clean up all stale/completed agents."""
+    cleaned = agent_manager.cleanup_stale_agents()
+    return {"success": True, "cleaned": cleaned, "remaining": len(agent_manager._agents)}
+
+
+@app.delete("/api/local-claude/agents")
+def kill_all_agents(cleanup_worktrees: bool = False):
+    """Kill all agents."""
+    agent_ids = list(agent_manager._agents.keys())
+    for agent_id in agent_ids:
+        agent_manager.kill(agent_id, cleanup_worktrees)
+    return {"success": True, "killed": len(agent_ids)}
 
 
 @app.get("/api/local-claude/agents/{agent_id}/output")
