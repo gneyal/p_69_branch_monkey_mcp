@@ -1067,10 +1067,6 @@ async def execute_task(request: TaskExecuteRequest):
 @app.post("/api/local-claude/agents")
 async def create_agent(request: CreateAgentRequest):
     """Create and start a new local Claude Code agent."""
-    print(f"[CreateAgent] Received: working_dir={request.working_dir}, skip_branch={request.skip_branch}")
-    print(f"[CreateAgent] Default working dir would be: {get_default_working_dir()}")
-    effective_dir = request.working_dir or get_default_working_dir()
-    print(f"[CreateAgent] Using effective working_dir: {effective_dir}")
     return await agent_manager.create(
         task_id=request.task_id,
         task_number=request.task_number,
@@ -1212,6 +1208,79 @@ def check_claude_installed():
         "installed": claude_path is not None,
         "path": claude_path
     }
+
+
+@app.get("/api/git-status")
+def get_git_status(path: str = None):
+    """Get git status for a directory.
+
+    Args:
+        path: Directory path to check. Defaults to working directory.
+
+    Returns:
+        {
+            is_clean: bool - True if working tree is clean,
+            changes_count: int - Number of changed files,
+            branch: str - Current branch name,
+            staged: int - Number of staged files,
+            unstaged: int - Number of unstaged files,
+            untracked: int - Number of untracked files
+        }
+    """
+    directory = path or get_default_working_dir()
+
+    if not directory or not os.path.isdir(directory):
+        return {"error": "Invalid directory", "is_clean": None, "changes_count": 0}
+
+    if not is_git_repo(directory):
+        return {"error": "Not a git repository", "is_clean": None, "changes_count": 0}
+
+    try:
+        # Get current branch
+        branch = get_current_branch(directory) or "unknown"
+
+        # Get porcelain status
+        result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=directory,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+
+        lines = [l for l in result.stdout.strip().split('\n') if l]
+
+        staged = 0
+        unstaged = 0
+        untracked = 0
+
+        for line in lines:
+            if len(line) >= 2:
+                index_status = line[0]
+                worktree_status = line[1]
+
+                if index_status == '?':
+                    untracked += 1
+                elif index_status != ' ':
+                    staged += 1
+
+                if worktree_status not in (' ', '?'):
+                    unstaged += 1
+
+        changes_count = len(lines)
+
+        return {
+            "is_clean": changes_count == 0,
+            "changes_count": changes_count,
+            "branch": branch,
+            "staged": staged,
+            "unstaged": unstaged,
+            "untracked": untracked
+        }
+    except subprocess.CalledProcessError as e:
+        return {"error": str(e), "is_clean": None, "changes_count": 0}
+    except Exception as e:
+        return {"error": str(e), "is_clean": None, "changes_count": 0}
 
 
 @app.get("/health")
@@ -1411,59 +1480,6 @@ def set_working_directory(request: WorkingDirectoryRequest):
         "git_root": git_root,
         "worktree_count": worktree_count
     }
-
-
-@app.get("/api/git-status")
-def get_git_status(path: Optional[str] = None):
-    """Get git status for a directory (clean/dirty, uncommitted changes count)."""
-    work_dir = path or get_default_working_dir()
-
-    if not os.path.isdir(work_dir):
-        raise HTTPException(status_code=400, detail=f"Directory does not exist: {work_dir}")
-
-    git_root = get_git_root(work_dir)
-    if not git_root:
-        return {
-            "is_git_repo": False,
-            "path": work_dir
-        }
-
-    try:
-        # Get status --porcelain for machine-readable output
-        result = subprocess.run(
-            ["git", "status", "--porcelain"],
-            cwd=work_dir,
-            capture_output=True,
-            text=True
-        )
-
-        changes = result.stdout.strip().split('\n') if result.stdout.strip() else []
-        staged = sum(1 for c in changes if c and c[0] in 'MADRC')
-        unstaged = sum(1 for c in changes if c and len(c) > 1 and c[1] in 'MADRC')
-        untracked = sum(1 for c in changes if c and c.startswith('??'))
-
-        # Get current branch
-        branch_result = subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=work_dir,
-            capture_output=True,
-            text=True
-        )
-        current_branch = branch_result.stdout.strip() if branch_result.returncode == 0 else None
-
-        return {
-            "is_git_repo": True,
-            "path": work_dir,
-            "git_root": git_root,
-            "branch": current_branch,
-            "is_clean": len(changes) == 0,
-            "changes_count": len(changes),
-            "staged": staged,
-            "unstaged": unstaged,
-            "untracked": untracked
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to get git status: {str(e)}")
 
 
 # =============================================================================
