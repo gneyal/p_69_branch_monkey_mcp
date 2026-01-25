@@ -1497,6 +1497,7 @@ class DevServerRequest(BaseModel):
     run_id: Optional[str] = None  # Run/session ID - a task can have multiple runs
     dev_script: Optional[str] = None  # Custom script, e.g. "cd frontend && npm run dev --port {port}"
     tunnel: Optional[bool] = False  # Create ngrok tunnel for remote access
+    worktree_path: Optional[str] = None  # Explicit worktree path (for cross-repo scenarios)
 
 
 class OpenInEditorRequest(BaseModel):
@@ -2045,10 +2046,17 @@ async def start_dev_server(request: DevServerRequest):
             _delete_dev_server_from_db(run_id)
             del _running_dev_servers[run_id]
 
-    # Find worktree
-    worktree_path = find_worktree_path(task_number)
-    if not worktree_path:
-        raise HTTPException(status_code=404, detail=f"No worktree found for task {task_number}")
+    # Find worktree - use provided path if available, otherwise search locally
+    worktree_path = request.worktree_path
+    if worktree_path:
+        # Validate the provided path exists
+        if not Path(worktree_path).exists():
+            raise HTTPException(status_code=404, detail=f"Provided worktree path does not exist: {worktree_path}")
+        print(f"[DevServer] Using provided worktree path: {worktree_path}")
+    else:
+        worktree_path = find_worktree_path(task_number)
+        if not worktree_path:
+            raise HTTPException(status_code=404, detail=f"No worktree found for task {task_number}")
 
     # Find available port
     port = find_available_port(BASE_DEV_PORT + task_number)
