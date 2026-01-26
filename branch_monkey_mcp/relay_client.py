@@ -823,7 +823,7 @@ def is_port_in_use(port: int) -> bool:
         return s.connect_ex(('127.0.0.1', port)) == 0
 
 
-def start_server_in_background(port: int = 18081, working_dir: Optional[str] = None):
+def start_server_in_background(port: int = 18081, home_dir: Optional[str] = None, working_dir: Optional[str] = None):
     """Start the local agent server in a background thread."""
     import threading
 
@@ -835,9 +835,12 @@ def start_server_in_background(port: int = 18081, working_dir: Optional[str] = N
 
     def run():
         from .local_server import run_server, set_default_working_dir, set_home_directory
+        if home_dir:
+            set_home_directory(home_dir)
         if working_dir:
-            set_home_directory(working_dir)
             set_default_working_dir(working_dir)
+        elif home_dir:
+            set_default_working_dir(home_dir)
         run_server(port=port)
 
     thread = threading.Thread(target=run, daemon=True)
@@ -848,8 +851,6 @@ def start_server_in_background(port: int = 18081, working_dir: Optional[str] = N
     time.sleep(0.5)
     if is_port_in_use(port):
         print(f"[Relay] Local agent server started on port {port}")
-        if working_dir:
-            print(f"[Relay] Working directory: {working_dir}")
     else:
         print(f"[Relay] Warning: Server may have failed to start on port {port}")
 
@@ -988,20 +989,39 @@ def main():
     if not args.no_mcp:
         setup_mcp_config(working_dir, args.cloud_url)
 
+    # Determine home directory (parent of projects) vs current project
+    # Home is typically the Code folder, project is a subfolder
+    home_dir = working_dir
+    current_project = None
+
+    # Check if working_dir looks like a project (has .git, package.json, etc.)
+    project_markers = ['.git', 'package.json', 'pyproject.toml', 'Cargo.toml', 'go.mod', 'pom.xml']
+    is_project = any(os.path.exists(os.path.join(working_dir, marker)) for marker in project_markers)
+
+    if is_project:
+        # working_dir is a project, home is its parent
+        current_project = working_dir
+        home_dir = os.path.dirname(working_dir)
+
     print(f"")
     print(f"\033[1mBranch Monkey Relay\033[0m")
     print(f"")
     print(f"  \033[38;2;107;114;128mThis connects your machine to kompany.dev so you can\033[0m")
     print(f"  \033[38;2;107;114;128mrun AI agents on your local codebase from the cloud.\033[0m")
     print(f"")
-    print(f"  Project:   \033[1m{working_dir}\033[0m")
+    print(f"  Home:      \033[1m{home_dir}\033[0m")
+    if current_project:
+        project_name = os.path.basename(current_project)
+        print(f"  Project:   \033[1m{project_name}\033[0m \033[38;2;107;114;128m({current_project})\033[0m")
+    else:
+        print(f"  Project:   \033[38;2;107;114;128m(none selected - pick one in dashboard)\033[0m")
     print(f"  Dashboard: \033[1mhttp://localhost:{args.port}/\033[0m")
     print(f"")
 
     # Start local agent server unless --no-server is specified
     if not args.no_server:
         print(f"\033[38;2;107;114;128mStarting local server...\033[0m")
-        start_server_in_background(port=args.port, working_dir=working_dir)
+        start_server_in_background(port=args.port, home_dir=home_dir, working_dir=current_project)
         time.sleep(1)
     else:
         print(f"\033[38;2;107;114;128mSkipping local server (--no-server)\033[0m")
