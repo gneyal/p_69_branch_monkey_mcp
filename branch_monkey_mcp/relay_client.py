@@ -4,6 +4,8 @@ Relay Client for Kompany Cloud
 This module allows a local machine to connect to Kompany Cloud
 and receive relayed requests from the web UI.
 
+VERSION: 0.2.0
+
 The client:
 1. Authenticates using device auth flow (if no cached token)
 2. Gets connection config from cloud (Supabase URL, key, etc.)
@@ -53,6 +55,9 @@ class ConnectionState(Enum):
     CONNECTING = "connecting"
     CONNECTED = "connected"
     RECONNECTING = "reconnecting"
+
+# Version
+VERSION = "0.2.0"
 
 # Config file location
 CONFIG_DIR = Path.home() / ".kompany"
@@ -1004,7 +1009,7 @@ def main():
         home_dir = os.path.dirname(working_dir)
 
     print(f"")
-    print(f"\033[1mKompany Relay\033[0m")
+    print(f"\033[1mKompany Relay\033[0m v{VERSION}")
     print(f"")
     print(f"  \033[38;2;107;114;128mThis connects your machine to kompany.dev so you can\033[0m")
     print(f"  \033[38;2;107;114;128mrun AI agents on your local codebase from the cloud.\033[0m")
