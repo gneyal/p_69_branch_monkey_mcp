@@ -527,11 +527,18 @@
               </div>
 
               <!-- Worktrees Grid -->
-              <div x-show="worktrees.length === 0" class="text-center py-8 text-apple-tertiary text-sm">
+              <div x-show="loadingWorktrees" class="text-center py-8">
+                <svg class="w-6 h-6 mx-auto text-apple-cyan animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <div class="text-xs text-apple-secondary mt-2">Loading worktrees...</div>
+              </div>
+              <div x-show="!loadingWorktrees && worktrees.length === 0" class="text-center py-8 text-apple-tertiary text-sm">
                 No worktrees active. Start an agent to create one.
               </div>
 
-              <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              <div x-show="!loadingWorktrees && worktrees.length > 0" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                 <template x-for="wt in [...worktrees].sort((a, b) => (b.task_number || 0) - (a.task_number || 0))" :key="wt.path">
                   <div class="bg-black/30 rounded-xl p-4 border border-white/5 hover:border-apple-cyan/30 transition-colors">
                     <!-- Worktree Header -->
@@ -764,7 +771,14 @@
 
       <!-- Worktrees -->
       <div x-show="activeTab === 'worktrees'" x-cloak>
-        <div x-show="worktrees.length === 0" class="text-center py-20">
+        <div x-show="loadingWorktrees" class="text-center py-20">
+          <svg class="w-8 h-8 mx-auto text-apple-cyan animate-spin" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+          <div class="text-sm text-apple-secondary mt-4">Loading worktrees...</div>
+        </div>
+        <div x-show="!loadingWorktrees && worktrees.length === 0" class="text-center py-20">
           <div class="w-16 h-16 mx-auto mb-4 rounded-2xl bg-apple-surface flex items-center justify-center">
             <svg class="w-8 h-8 text-apple-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
@@ -774,7 +788,7 @@
           <p class="text-apple-secondary text-sm">Worktrees are created when agents start tasks</p>
         </div>
 
-        <div class="space-y-2">
+        <div x-show="!loadingWorktrees" class="space-y-2">
           <template x-for="wt in [...worktrees].sort((a, b) => (b.task_number || 0) - (a.task_number || 0))" :key="wt.path">
             <div class="card rounded-xl p-4">
               <div class="flex items-center justify-between">
@@ -1583,6 +1597,7 @@
         inputMessages: {},
         agentStreams: {},
         worktrees: [],
+        loadingWorktrees: false,
         devServers: [],
         proxyStatus: { running: false, proxyPort: 5176, targetPort: null, targetRunId: null },
         commits: [],
@@ -1913,11 +1928,16 @@
         },
 
         async refreshWorktrees() {
+          this.loadingWorktrees = true;
           try {
             const res = await fetch('/api/local-claude/worktrees');
             const data = await res.json();
             this.worktrees = data.worktrees || [];
-          } catch (e) {}
+          } catch (e) {
+            this.worktrees = [];
+          } finally {
+            this.loadingWorktrees = false;
+          }
         },
 
         async openInEditor(n) {
