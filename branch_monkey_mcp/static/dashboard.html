@@ -450,15 +450,23 @@
 
               <!-- No project selected - show discovered projects -->
               <div x-show="!hasProjectSelected" class="space-y-3">
-                <div class="text-sm text-apple-secondary text-center py-2">Select a project to get started</div>
-                <div x-show="discoveredProjects.length === 0" class="text-center py-4">
-                  <button @click="refreshDiscoveredProjects()" class="btn btn-secondary px-4 py-2 rounded-lg text-xs">
-                    <span x-show="!loadingProjects">Load Projects</span>
-                    <span x-show="loadingProjects">Loading...</span>
+                <div class="flex items-center justify-between">
+                  <div class="text-sm text-apple-secondary">Select a project to get started</div>
+                  <button @click="refreshDiscoveredProjects()" class="text-xs text-apple-cyan hover:underline flex items-center gap-1">
+                    <svg class="w-3 h-3" :class="loadingProjects ? 'animate-spin' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                    </svg>
+                    Refresh
                   </button>
                 </div>
-                <div x-show="discoveredProjects.length > 0" class="grid grid-cols-2 gap-2 max-h-[200px] overflow-y-auto">
-                  <template x-for="project in discoveredProjects.slice(0, 12)" :key="project.path">
+                <div x-show="loadingProjects" class="text-center py-4 text-apple-secondary text-xs">
+                  Loading projects...
+                </div>
+                <div x-show="!loadingProjects && discoveredProjects.length === 0" class="text-center py-4 text-apple-tertiary text-xs">
+                  No projects found
+                </div>
+                <div x-show="!loadingProjects && discoveredProjects.length > 0" class="grid grid-cols-2 gap-2 max-h-[300px] overflow-y-auto">
+                  <template x-for="project in discoveredProjects" :key="project.path">
                     <button @click="selectProject(project.path)"
                             class="flex items-center gap-2 bg-black/30 hover:bg-apple-yellow/10 rounded-lg px-3 py-2 text-left transition-colors border border-transparent hover:border-apple-yellow/30">
                       <svg class="w-4 h-4 text-apple-yellow flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -470,11 +478,6 @@
                       </div>
                     </button>
                   </template>
-                </div>
-                <div x-show="discoveredProjects.length > 12" class="text-center">
-                  <button @click="openDirectoryModal('project')" class="text-xs text-apple-cyan hover:underline">
-                    Show all projects...
-                  </button>
                 </div>
               </div>
 
