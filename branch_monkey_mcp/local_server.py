@@ -2748,6 +2748,102 @@ def list_time_machine_previews():
 
 
 # =============================================================================
+# Project Discovery
+# =============================================================================
+
+def discover_git_projects(search_paths: List[str] = None, max_depth: int = 3) -> List[dict]:
+    """
+    Discover git repositories in common locations.
+    Returns list of projects with name, path, and git info.
+    """
+    if search_paths is None:
+        home = Path.home()
+        search_paths = [
+            home / "Code",
+            home / "code",
+            home / "Projects",
+            home / "projects",
+            home / "Developer",
+            home / "dev",
+            home / "repos",
+            home / "git",
+            home / "workspace",
+            home / "src",
+        ]
+
+    projects = []
+    seen_paths = set()
+
+    for search_path in search_paths:
+        search_path = Path(search_path)
+        if not search_path.exists():
+            continue
+
+        # Walk directory tree up to max_depth
+        for depth in range(max_depth + 1):
+            # Generate glob pattern for this depth
+            pattern = "/".join(["*"] * (depth + 1)) if depth > 0 else "*"
+
+            for path in search_path.glob(pattern):
+                if not path.is_dir():
+                    continue
+
+                git_dir = path / ".git"
+                if git_dir.exists() and str(path) not in seen_paths:
+                    seen_paths.add(str(path))
+
+                    # Get git remote URL if available
+                    remote_url = None
+                    try:
+                        result = subprocess.run(
+                            ["git", "remote", "get-url", "origin"],
+                            cwd=path, capture_output=True, text=True, timeout=5
+                        )
+                        if result.returncode == 0:
+                            remote_url = result.stdout.strip()
+                    except Exception:
+                        pass
+
+                    # Get current branch
+                    branch = None
+                    try:
+                        result = subprocess.run(
+                            ["git", "branch", "--show-current"],
+                            cwd=path, capture_output=True, text=True, timeout=5
+                        )
+                        if result.returncode == 0:
+                            branch = result.stdout.strip()
+                    except Exception:
+                        pass
+
+                    projects.append({
+                        "name": path.name,
+                        "path": str(path),
+                        "remote_url": remote_url,
+                        "branch": branch,
+                        "parent": str(path.parent),
+                    })
+
+    # Sort by name
+    projects.sort(key=lambda p: p["name"].lower())
+    return projects
+
+
+@app.get("/api/local-claude/projects")
+def list_local_projects(refresh: bool = False):
+    """
+    List discovered git projects on this machine.
+    Used by web UI to show available projects when creating/linking.
+    """
+    projects = discover_git_projects()
+    return {
+        "projects": projects,
+        "count": len(projects),
+        "machine_name": socket.gethostname()
+    }
+
+
+# =============================================================================
 # Server Runner
 # =============================================================================
 
