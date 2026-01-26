@@ -1,7 +1,7 @@
 """
-Relay Client for Branch Monkey Cloud
+Relay Client for Kompany Cloud
 
-This module allows a local machine to connect to Branch Monkey Cloud
+This module allows a local machine to connect to Kompany Cloud
 and receive relayed requests from the web UI.
 
 The client:
@@ -89,7 +89,7 @@ DEFAULT_CLOUD_URL = FALLBACK_CLOUD_URL
 
 class RelayClient:
     """
-    Relay client that connects local machine to Branch Monkey Cloud
+    Relay client that connects local machine to Kompany Cloud
     using Supabase Realtime.
 
     Handles:
@@ -926,7 +926,7 @@ def main():
     resolved_cloud_url = fetch_cloud_url_from_config(FALLBACK_CLOUD_URL)
 
     parser = argparse.ArgumentParser(
-        description="Connect your machine to Branch Monkey Cloud"
+        description="Connect your machine to Kompany Cloud"
     )
     parser.add_argument(
         "--cloud-url",
@@ -1004,7 +1004,7 @@ def main():
         home_dir = os.path.dirname(working_dir)
 
     print(f"")
-    print(f"\033[1mBranch Monkey Relay\033[0m")
+    print(f"\033[1mKompany Relay\033[0m")
     print(f"")
     print(f"  \033[38;2;107;114;128mThis connects your machine to kompany.dev so you can\033[0m")
     print(f"  \033[38;2;107;114;128mrun AI agents on your local codebase from the cloud.\033[0m")
