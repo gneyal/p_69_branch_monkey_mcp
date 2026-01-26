@@ -73,7 +73,25 @@ app.include_router(project_discovery_router)
 
 
 # =============================================================================
-# Default Working Directory
+# Home Directory (base directory passed to relay, never changes)
+# =============================================================================
+
+_home_directory: Optional[str] = os.environ.get("BRANCH_MONKEY_WORKING_DIR")
+
+
+def set_home_directory(directory: str) -> None:
+    """Set the home directory (only called once at startup)."""
+    global _home_directory
+    _home_directory = directory
+
+
+def get_home_directory() -> str:
+    """Get the home directory (the base directory passed to the relay)."""
+    return _home_directory or os.getcwd()
+
+
+# =============================================================================
+# Current Project Directory (can be changed to a specific project within home)
 # =============================================================================
 
 _default_working_dir: Optional[str] = os.environ.get("BRANCH_MONKEY_WORKING_DIR")
@@ -92,8 +110,8 @@ def get_default_working_dir() -> str:
 
 
 # Initialize from environment on startup
-if _default_working_dir:
-    print(f"[Server] Working directory from env: {_default_working_dir}")
+if _home_directory:
+    print(f"[Server] Default working directory: {_home_directory}")
 
 
 # =============================================================================
@@ -1429,7 +1447,8 @@ class WorkingDirectoryRequest(BaseModel):
 
 @app.get("/api/config/working-directory")
 def get_working_directory():
-    """Get the current working directory for agent execution."""
+    """Get the home and current project directory for agent execution."""
+    home_dir = get_home_directory()
     work_dir = get_default_working_dir()
     git_root = get_git_root(work_dir)
 
@@ -1444,6 +1463,7 @@ def get_working_directory():
             worktree_count = len([d for d in worktrees_dir.iterdir() if d.is_dir()])
 
     return {
+        "home_directory": home_dir,
         "working_directory": work_dir,
         "git_root": git_root,
         "is_git_repo": is_git_repo,

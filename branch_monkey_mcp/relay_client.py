@@ -834,8 +834,9 @@ def start_server_in_background(port: int = 18081, working_dir: Optional[str] = N
         return None
 
     def run():
-        from .local_server import run_server, set_default_working_dir
+        from .local_server import run_server, set_default_working_dir, set_home_directory
         if working_dir:
+            set_home_directory(working_dir)
             set_default_working_dir(working_dir)
         run_server(port=port)
 

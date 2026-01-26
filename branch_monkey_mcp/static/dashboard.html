@@ -402,8 +402,33 @@
             </div>
           </div>
 
-          <!-- Project Directory Section -->
+          <!-- Kompany Home Section -->
           <div class="w-full max-w-xl mt-4">
+            <div class="card rounded-xl p-4">
+              <div class="flex items-center gap-2 mb-3">
+                <div class="w-8 h-8 rounded-lg bg-apple-purple/15 flex items-center justify-center">
+                  <svg class="w-4 h-4 text-apple-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/>
+                  </svg>
+                </div>
+                <div class="flex-1">
+                  <div class="font-medium text-sm" x-text="appName + ' Home'">Kompany Home</div>
+                  <div class="text-[10px] text-apple-secondary">Base directory for all projects</div>
+                </div>
+              </div>
+              <div class="bg-black/30 rounded-lg p-3">
+                <span class="mono text-xs text-apple-purple truncate" x-text="workingDirInfo?.home_directory || workingDirectory || 'Not configured'"></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Connection Line: Home to Project -->
+          <div class="flex flex-col items-center py-2">
+            <div class="w-px h-6 bg-gradient-to-b from-apple-purple/50 to-apple-yellow/50"></div>
+          </div>
+
+          <!-- Current Project Directory Section -->
+          <div class="w-full max-w-xl">
             <div class="card rounded-xl p-4">
               <div class="flex items-center gap-2 mb-3">
                 <div class="w-8 h-8 rounded-lg bg-apple-yellow/15 flex items-center justify-center">
@@ -412,7 +437,7 @@
                   </svg>
                 </div>
                 <div class="flex-1">
-                  <div class="font-medium text-sm">Project Directory</div>
+                  <div class="font-medium text-sm">Current Project</div>
                   <div class="text-[10px] text-apple-secondary">Working directory for agents and worktrees</div>
                 </div>
                 <button @click="newDirectoryPath = workingDirectory; directoryError = null; showDirectoryModal = true" class="btn btn-secondary px-3 py-1.5 rounded-lg text-xs">
