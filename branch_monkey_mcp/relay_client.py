@@ -816,9 +816,22 @@ async def start_relay_client_async(
     return client
 
 
+def is_port_in_use(port: int) -> bool:
+    """Check if a port is already in use."""
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        return s.connect_ex(('127.0.0.1', port)) == 0
+
+
 def start_server_in_background(port: int = 18081, working_dir: Optional[str] = None):
     """Start the local agent server in a background thread."""
     import threading
+
+    # Check if port is already in use
+    if is_port_in_use(port):
+        print(f"[Relay] Port {port} is already in use - skipping local server")
+        print(f"[Relay] Another relay might be running. Kill it with: lsof -ti:{port} | xargs kill -9")
+        return None
 
     def run():
         from .local_server import run_server, set_default_working_dir
@@ -828,9 +841,17 @@ def start_server_in_background(port: int = 18081, working_dir: Optional[str] = N
 
     thread = threading.Thread(target=run, daemon=True)
     thread.start()
-    print(f"[Relay] Local agent server started on port {port}")
-    if working_dir:
-        print(f"[Relay] Working directory: {working_dir}")
+
+    # Wait a moment and verify the server started
+    import time
+    time.sleep(0.5)
+    if is_port_in_use(port):
+        print(f"[Relay] Local agent server started on port {port}")
+        if working_dir:
+            print(f"[Relay] Working directory: {working_dir}")
+    else:
+        print(f"[Relay] Warning: Server may have failed to start on port {port}")
+
     return thread
 
 
