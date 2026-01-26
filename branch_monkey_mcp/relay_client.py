@@ -966,22 +966,25 @@ def main():
     if not args.no_mcp:
         setup_mcp_config(working_dir, args.cloud_url)
 
-    print(f"\nKompany Relay")
-    print(f"   Kompany Cloud: {args.cloud_url}")
-    print(f"   Local port: {args.port}")
-    print(f"   Working dir: {working_dir}")
-    print(f"   Dashboard: http://localhost:{args.port}/")
+    print(f"")
+    print(f"\033[1mBranch Monkey Relay\033[0m")
+    print(f"")
+    print(f"  \033[38;2;107;114;128mThis connects your machine to kompany.dev so you can\033[0m")
+    print(f"  \033[38;2;107;114;128mrun AI agents on your local codebase from the cloud.\033[0m")
+    print(f"")
+    print(f"  Project:   \033[1m{working_dir}\033[0m")
+    print(f"  Dashboard: \033[1mhttp://localhost:{args.port}/\033[0m")
+    print(f"")
 
     # Start local agent server unless --no-server is specified
     if not args.no_server:
-        print(f"\n[Relay] Starting local agent server...")
+        print(f"\033[38;2;107;114;128mStarting local server...\033[0m")
         start_server_in_background(port=args.port, working_dir=working_dir)
-        # Give server time to start
         time.sleep(1)
     else:
-        print(f"\n[Relay] Skipping local server (--no-server)")
+        print(f"\033[38;2;107;114;128mSkipping local server (--no-server)\033[0m")
 
-    print(f"\n[Relay] Starting cloud relay connection...")
+    print(f"\033[38;2;107;114;128mConnecting to {args.cloud_url}...\033[0m")
     run_relay_client(
         cloud_url=args.cloud_url,
         local_port=args.port,
