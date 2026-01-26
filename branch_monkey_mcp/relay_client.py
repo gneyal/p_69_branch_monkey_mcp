@@ -55,7 +55,7 @@ class ConnectionState(Enum):
     RECONNECTING = "reconnecting"
 
 # Config file location
-CONFIG_DIR = Path.home() / ".branch-monkey"
+CONFIG_DIR = Path.home() / ".kompany"
 TOKEN_FILE = CONFIG_DIR / "relay_token.json"
 MACHINE_ID_FILE = CONFIG_DIR / "machine_id"
 
