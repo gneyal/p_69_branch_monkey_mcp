@@ -544,8 +544,12 @@ class LocalAgentManager:
         stale_ids = []
 
         for agent_id, agent in self._agents.items():
-            # Remove completed/failed agents
-            if agent.status in ("completed", "failed", "stopped"):
+            # Remove failed/stopped agents, but keep completed ones with session_id for resumption
+            if agent.status in ("failed", "stopped"):
+                stale_ids.append(agent_id)
+                continue
+            if agent.status == "completed" and not agent.session_id:
+                # Only clean up completed agents without session_id
                 stale_ids.append(agent_id)
                 continue
 
@@ -553,8 +557,9 @@ class LocalAgentManager:
             if agent.process:
                 poll = agent.process.poll()
                 if poll is not None:
-                    # Process has exited
-                    stale_ids.append(agent_id)
+                    # Process has exited - but keep if it has a session_id for resumption
+                    if not agent.session_id:
+                        stale_ids.append(agent_id)
                     continue
 
             # Check for stale agents (no activity for a while)
