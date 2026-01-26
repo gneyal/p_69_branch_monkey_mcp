@@ -1485,7 +1485,10 @@ def set_working_directory(request: WorkingDirectoryRequest):
 
     # Check if it's a git repo
     git_root = get_git_root(abs_path)
-    if not git_root:
+    home_dir = get_home_directory()
+
+    # Allow setting to home directory (to clear project selection) or any git repo
+    if not git_root and abs_path != home_dir:
         raise HTTPException(status_code=400, detail=f"Not a git repository: {abs_path}")
 
     # Set the new working directory
@@ -1493,14 +1496,17 @@ def set_working_directory(request: WorkingDirectoryRequest):
 
     # Count worktrees
     worktree_count = 0
-    worktrees_dir = Path(git_root) / ".worktrees"
-    if worktrees_dir.exists():
-        worktree_count = len([d for d in worktrees_dir.iterdir() if d.is_dir()])
+    if git_root:
+        worktrees_dir = Path(git_root) / ".worktrees"
+        if worktrees_dir.exists():
+            worktree_count = len([d for d in worktrees_dir.iterdir() if d.is_dir()])
 
     return {
         "status": "ok",
+        "home_directory": home_dir,
         "working_directory": abs_path,
         "git_root": git_root,
+        "is_git_repo": git_root is not None,
         "worktree_count": worktree_count
     }
 
