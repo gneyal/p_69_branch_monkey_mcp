@@ -616,9 +616,12 @@ class LocalAgentManager:
         worktree_path = None
 
         # Handle git worktree if in a git repo with task number (unless skip_branch is set)
+        print(f"[LocalAgent] Worktree check: task_number={task_number}, is_git={is_git_repo(repo_dir)}, skip_branch={skip_branch}")
         if task_number and is_git_repo(repo_dir) and not skip_branch:
             branch = generate_branch_name(task_number, task_title, agent_id)
+            print(f"[LocalAgent] Creating worktree for branch: {branch}")
             result = create_worktree(repo_dir, branch, task_number, agent_id)
+            print(f"[LocalAgent] Worktree result: {result}")
 
             if result["success"]:
                 worktree_path = result["worktree_path"]
@@ -632,6 +635,18 @@ class LocalAgentManager:
         # Build prompt
         if prompt:
             final_prompt = prompt
+            # If worktree was created, prepend info so agent knows it's already in a worktree
+            if worktree_path:
+                worktree_info = f"""## IMPORTANT: Worktree Already Created
+You are working in an isolated git worktree at: `{worktree_path}`
+Branch: `{branch}`
+
+Do NOT create another worktree - you are already isolated. Skip any worktree creation steps.
+
+---
+
+"""
+                final_prompt = worktree_info + final_prompt
         else:
             task_json = {
                 "task_uuid": task_id,
@@ -1187,6 +1202,16 @@ async def stream_output(agent_id: str, request: Request):
         try:
             init_event = {"type": "connected", "agentId": agent_id, "status": agent['status']}
             yield f"data: {json.dumps(init_event)}\n\n"
+
+            # Send worktree/branch info so frontend can update the UI
+            worktree_event = {
+                "type": "worktree_info",
+                "branch": agent.get('branch'),
+                "worktree_path": agent.get('worktree_path'),
+                "is_worktree": agent.get('worktree_path') is not None,
+                "work_dir": agent.get('work_dir')
+            }
+            yield f"data: {json.dumps(worktree_event)}\n\n"
 
             # If agent is already paused/completed, send that status immediately
             if agent['status'] in ('paused', 'completed', 'failed'):
