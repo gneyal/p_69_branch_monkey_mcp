@@ -1563,6 +1563,7 @@ class DevServerRequest(BaseModel):
 class OpenInEditorRequest(BaseModel):
     task_number: Optional[int] = None
     path: Optional[str] = None
+    local_path: Optional[str] = None  # Base project path for finding worktrees
 
 
 # Track running dev servers by run_id (or task_number as fallback)
@@ -1889,12 +1890,33 @@ def get_branch_diff(branch: str):
 @app.post("/api/local-claude/open-in-editor")
 def open_in_editor(request: OpenInEditorRequest):
     """Open a worktree or path in VS Code."""
+    print(f"[OpenInEditor] task_number={request.task_number}, path={request.path}, local_path={request.local_path}")
     target_path = None
 
     if request.path:
         target_path = Path(request.path)
     elif request.task_number:
-        target_path = find_worktree_path(request.task_number)
+        # If local_path provided, search there; otherwise use default
+        if request.local_path:
+            worktrees_dir = Path(request.local_path) / ".worktrees"
+            print(f"[OpenInEditor] Searching in {worktrees_dir}, exists={worktrees_dir.exists()}")
+            if worktrees_dir.exists():
+                prefix = f"task-{request.task_number}-"
+                matching_dirs = []
+                for d in worktrees_dir.iterdir():
+                    if d.is_dir() and d.name.startswith(prefix):
+                        matching_dirs.append(d)
+                        print(f"[OpenInEditor] Found matching dir: {d.name}")
+                if matching_dirs:
+                    # Get most recently modified
+                    matching_dirs.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+                    target_path = matching_dirs[0]
+                    print(f"[OpenInEditor] Selected: {target_path}")
+
+        # Fallback to default search
+        if not target_path:
+            target_path = find_worktree_path(request.task_number)
+
         if not target_path:
             raise HTTPException(status_code=404, detail=f"No worktree found for task {request.task_number}")
     else:
