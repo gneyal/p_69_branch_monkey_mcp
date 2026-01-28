@@ -1857,30 +1857,70 @@ def merge_preview(task_number: int, branch: str):
 
 
 @app.get("/api/local-claude/diff")
-def get_branch_diff(branch: str):
+def get_branch_diff(branch: str, task_number: Optional[int] = None, worktree_path: Optional[str] = None):
     """Get diff between a branch and main."""
     work_dir = get_default_working_dir()
     git_root = get_git_root(work_dir)
     if not git_root:
         raise HTTPException(status_code=400, detail="Not in a git repository")
 
+    # Use provided worktree_path if available (most reliable)
+    diff_cwd = git_root
+    if worktree_path and os.path.isdir(worktree_path):
+        diff_cwd = worktree_path
+        print(f"[Diff] Using provided worktree path: {worktree_path}")
+    else:
+        # Try to extract task number from branch name if not provided
+        # Branch format: task/353-some-title or task-353-some-id
+        if not task_number and branch:
+            import re
+            match = re.search(r'task[/-](\d+)', branch)
+            if match:
+                task_number = int(match.group(1))
+
+        # Try to find worktree for this task - that's where the actual changes are
+        if task_number:
+            found_worktree = find_worktree_path(task_number)
+            if found_worktree:
+                diff_cwd = found_worktree
+                print(f"[Diff] Using found worktree path: {found_worktree}")
+
     try:
         # Get diff between main and the branch
-        result = subprocess.run(
-            ["git", "diff", "main..." + branch],
-            cwd=git_root,
-            capture_output=True,
-            text=True
-        )
-
-        if result.returncode != 0:
-            # Try without the ... syntax
+        # When in worktree, compare HEAD (current changes) against main
+        if diff_cwd != git_root:
+            # In worktree: diff main against current HEAD
             result = subprocess.run(
-                ["git", "diff", "main", branch],
+                ["git", "diff", "main...HEAD"],
+                cwd=diff_cwd,
+                capture_output=True,
+                text=True
+            )
+            if result.returncode != 0 or not result.stdout.strip():
+                # Fallback: diff main against working directory
+                result = subprocess.run(
+                    ["git", "diff", "main"],
+                    cwd=diff_cwd,
+                    capture_output=True,
+                    text=True
+                )
+        else:
+            # In main repo: diff main against branch
+            result = subprocess.run(
+                ["git", "diff", "main..." + branch],
                 cwd=git_root,
                 capture_output=True,
                 text=True
             )
+
+            if result.returncode != 0:
+                # Try without the ... syntax
+                result = subprocess.run(
+                    ["git", "diff", "main", branch],
+                    cwd=git_root,
+                    capture_output=True,
+                    text=True
+                )
 
         return {"diff": result.stdout or "No changes", "branch": branch}
     except Exception as e:
