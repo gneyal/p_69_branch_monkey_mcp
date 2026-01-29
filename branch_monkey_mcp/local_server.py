@@ -15,6 +15,7 @@ Routes:
 """
 
 import asyncio
+import base64
 import json
 import os
 import pty
@@ -25,6 +26,7 @@ import signal
 import socket
 import sqlite3
 import subprocess
+import tempfile
 import threading
 import uuid
 from dataclasses import dataclass, field
@@ -822,13 +824,24 @@ Do NOT create another worktree - you are already isolated. Skip any worktree cre
                 except Exception:
                     pass
 
-    async def _run_with_resume(self, agent: LocalAgent, message: str) -> None:
-        """Run a follow-up message using session resume."""
+    async def _run_with_resume(self, agent: LocalAgent, message: str, image_paths: List[str] = None) -> None:
+        """Run a follow-up message using session resume.
+
+        Args:
+            agent: The agent to resume
+            message: The follow-up message
+            image_paths: Optional list of image file paths (already included in message text)
+        """
         if not agent.session_id:
             return
 
         env = os.environ.copy()
         env.pop("ANTHROPIC_API_KEY", None)
+
+        # Image paths are already included in the message text as [Image: /path/to/file]
+        # Claude will use the Read tool to view them
+        if image_paths:
+            print(f"[LocalAgent] Message includes {len(image_paths)} image paths for Claude to read")
 
         cmd = [
             "claude",
@@ -902,8 +915,14 @@ Do NOT create another worktree - you are already isolated. Skip any worktree cre
             for a in self._agents.values()
         ]
 
-    async def resume_session(self, agent_id: str, message: str) -> bool:
-        """Resume an agent session with a follow-up message."""
+    async def resume_session(self, agent_id: str, message: str, image_paths: List[str] = None) -> bool:
+        """Resume an agent session with a follow-up message.
+
+        Args:
+            agent_id: The agent to resume
+            message: The follow-up message (may already contain image references)
+            image_paths: Optional list of image file paths to include
+        """
         agent = self._agents.get(agent_id)
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
@@ -920,12 +939,15 @@ Do NOT create another worktree - you are already isolated. Skip any worktree cre
                 detail="Agent is already running. Wait for it to complete."
             )
 
+        if image_paths:
+            print(f"[LocalAgent] Resuming with {len(image_paths)} images: {image_paths}")
+
         try:
             if agent_id in self._output_tasks:
                 self._output_tasks[agent_id].cancel()
 
             self._output_tasks[agent_id] = asyncio.create_task(
-                self._run_with_resume(agent, message)
+                self._run_with_resume(agent, message, image_paths)
             )
 
             return True
@@ -1052,8 +1074,15 @@ class TaskExecuteRequest(BaseModel):
     repository_url: Optional[str] = None
 
 
+class ImageData(BaseModel):
+    data: str  # base64 data URL (data:image/png;base64,...)
+    name: str = "image"
+    type: str = "image/png"
+
+
 class InputRequest(BaseModel):
     input: str
+    images: Optional[List[ImageData]] = None
 
 
 @app.post("/api/local-claude/task-execute")
@@ -1134,6 +1163,37 @@ def get_agent(agent_id: str):
     return agent
 
 
+def save_images_to_temp(images: List[ImageData]) -> List[str]:
+    """Save base64 images to temporary files and return file paths."""
+    temp_paths = []
+    for i, img in enumerate(images):
+        try:
+            # Parse data URL: data:image/png;base64,xxxxx
+            if img.data.startswith('data:'):
+                # Extract the base64 part after the comma
+                header, b64_data = img.data.split(',', 1)
+                # Get extension from content type
+                content_type = header.split(';')[0].split(':')[1]
+                ext = content_type.split('/')[-1]
+                if ext == 'jpeg':
+                    ext = 'jpg'
+            else:
+                # Assume raw base64
+                b64_data = img.data
+                ext = 'png'
+
+            # Decode and save to temp file
+            image_bytes = base64.b64decode(b64_data)
+            fd, temp_path = tempfile.mkstemp(suffix=f'.{ext}', prefix='claude_img_')
+            os.write(fd, image_bytes)
+            os.close(fd)
+            temp_paths.append(temp_path)
+            print(f"[LocalServer] Saved image {i+1} to {temp_path}")
+        except Exception as e:
+            print(f"[LocalServer] Failed to save image {i+1}: {e}")
+    return temp_paths
+
+
 @app.post("/api/local-claude/agents/{agent_id}/input")
 async def send_input(agent_id: str, request: InputRequest):
     """Send input to agent (resumes session if paused)."""
@@ -1143,9 +1203,19 @@ async def send_input(agent_id: str, request: InputRequest):
 
     message = request.input.rstrip('\n')
 
+    # Handle images: save to temp files
+    image_paths = []
+    if request.images:
+        image_paths = save_images_to_temp(request.images)
+        if image_paths:
+            # Prepend image paths to message - Claude can read image files directly
+            image_refs = "\n".join([f"Please read and analyze this image file: {path}" for path in image_paths])
+            message = f"{image_refs}\n\n{message}" if message else image_refs
+            print(f"[LocalServer] Added {len(image_paths)} image references to message")
+
     if agent["status"] in ("paused", "completed", "failed") and agent.get("session_id"):
-        await agent_manager.resume_session(agent_id, message)
-        return {"success": True, "action": "resumed"}
+        await agent_manager.resume_session(agent_id, message, image_paths)
+        return {"success": True, "action": "resumed", "images": len(image_paths)}
 
     if agent["status"] == "running":
         raise HTTPException(
