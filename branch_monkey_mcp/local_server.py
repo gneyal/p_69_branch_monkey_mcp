@@ -3148,6 +3148,15 @@ async def ai_decompose_version(request: AIDecomposeVersionRequest):
 
     Uses local Claude Code CLI to analyze and suggest tasks.
     """
+    import time
+    start_time = time.time()
+
+    def log_timing(step: str):
+        elapsed = time.time() - start_time
+        print(f"[AI Decompose] [{elapsed:.2f}s] {step}")
+
+    log_timing("Request received")
+
     # Check if claude is installed
     claude_path = shutil.which("claude")
     if not claude_path:
@@ -3156,8 +3165,11 @@ async def ai_decompose_version(request: AIDecomposeVersionRequest):
             detail="Claude Code CLI not found. Install with: npm install -g @anthropic-ai/claude-code"
         )
 
+    log_timing(f"Claude CLI found at: {claude_path}")
+
     # Build prompt with available agents for assignment
     system_prompt = build_decompose_prompt(request.available_agents)
+    log_timing("Prompt built")
 
     user_message = f"""Version to decompose:
 - Key: {request.version_key}
@@ -3175,6 +3187,9 @@ Please suggest additional tasks that should be created for this version."""
 
 {user_message}"""
 
+    prompt_length = len(full_prompt)
+    log_timing(f"Full prompt ready ({prompt_length} chars)")
+
     try:
         env = os.environ.copy()
         env.pop("ANTHROPIC_API_KEY", None)
@@ -3186,7 +3201,8 @@ Please suggest additional tasks that should be created for this version."""
             "--dangerously-skip-permissions"
         ]
 
-        print(f"[AI Decompose] Running Claude CLI for task decomposition")
+        log_timing(f"Starting subprocess: claude -p '...' --output-format json")
+        print(f"[AI Decompose] Working directory: {get_default_working_dir()}")
 
         result = subprocess.run(
             cmd,
@@ -3197,6 +3213,8 @@ Please suggest additional tasks that should be created for this version."""
             timeout=90
         )
 
+        log_timing(f"Subprocess completed, return code: {result.returncode}")
+
         if result.returncode != 0:
             print(f"[AI Decompose] Claude CLI error: {result.stderr}")
             raise HTTPException(
@@ -3205,9 +3223,14 @@ Please suggest additional tasks that should be created for this version."""
             )
 
         output = result.stdout.strip()
-        print(f"[AI Decompose] Claude output: {output[:200]}...")
+        output_length = len(output)
+        log_timing(f"Got output ({output_length} chars)")
+        print(f"[AI Decompose] Claude output preview: {output[:300]}...")
+        if result.stderr:
+            print(f"[AI Decompose] Claude stderr: {result.stderr[:200]}")
 
         # Parse response
+        log_timing("Parsing JSON response")
         try:
             response_data = json.loads(output)
             if "result" in response_data:
@@ -3232,13 +3255,17 @@ Please suggest additional tasks that should be created for this version."""
                     detail="Could not parse AI response as JSON"
                 )
 
+        task_count = len(tasks_data.get("tasks", []))
+        log_timing(f"Done! Returning {task_count} tasks")
         return {"success": True, "tasks": tasks_data.get("tasks", [])}
 
     except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=504, detail="Claude CLI timed out")
+        log_timing("TIMEOUT - Claude CLI exceeded 90s limit")
+        raise HTTPException(status_code=504, detail="Claude CLI timed out after 90 seconds")
     except HTTPException:
         raise
     except Exception as e:
+        log_timing(f"ERROR: {str(e)}")
         print(f"[AI Decompose] Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
