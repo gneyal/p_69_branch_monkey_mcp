@@ -3193,7 +3193,7 @@ async def apply_agent(request: ApplyAgentRequest):
         output = result_stdout.strip()
         log_timing(f"Got output ({len(output)} chars)")
 
-        # Parse JSON response
+        # Parse JSON response from Claude CLI
         try:
             response_data = json.loads(output)
             if "result" in response_data:
@@ -3202,6 +3202,27 @@ async def apply_agent(request: ApplyAgentRequest):
                 result_text = output
         except json.JSONDecodeError:
             result_text = output
+
+        # Try to extract JSON if wrapped in markdown code blocks
+        def extract_json_from_markdown(text):
+            """Extract JSON from markdown code blocks if present."""
+            import re
+            # Look for ```json ... ``` blocks
+            json_match = re.search(r'```(?:json)?\s*\n?([\s\S]*?)\n?```', text)
+            if json_match:
+                return json_match.group(1).strip()
+            # Look for raw JSON object
+            json_obj_match = re.search(r'(\{[\s\S]*\})', text)
+            if json_obj_match:
+                return json_obj_match.group(1).strip()
+            return text
+
+        # If result_text looks like it contains markdown, try to extract JSON
+        if '```' in result_text or result_text.strip().startswith('#'):
+            extracted = extract_json_from_markdown(result_text)
+            if extracted != result_text:
+                log_timing(f"Extracted JSON from markdown ({len(extracted)} chars)")
+                result_text = extracted
 
         log_timing(f"Done!")
 
