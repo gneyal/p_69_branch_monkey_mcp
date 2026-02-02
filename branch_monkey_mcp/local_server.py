@@ -3099,27 +3099,46 @@ class AIDecomposeVersionRequest(BaseModel):
     version_label: str
     description: Optional[str] = None
     existing_tasks: List[dict] = []
+    available_agents: List[dict] = []
 
 
-AI_DECOMPOSE_SYSTEM_PROMPT = """You are a project planning assistant. Break down a version/milestone into actionable tasks.
+def build_decompose_prompt(available_agents: List[dict]) -> str:
+    """Build the AI decomposition prompt with available agents."""
+    agents_section = ""
+    if available_agents:
+        agent_list = "\n".join([
+            f"  - slug: \"{a.get('slug')}\", name: \"{a.get('name')}\", purpose: \"{a.get('description', '')}\""
+            for a in available_agents
+        ])
+        agents_section = f"""
+Available agents (assign the most appropriate one to each task based on task type):
+{agent_list}
+"""
+
+    return f"""You are a project planning assistant. Break down a version/milestone into actionable tasks.
 
 Consider:
 1. What already exists (existing tasks)
 2. Logical dependencies between tasks
 3. Appropriate granularity (not too big, not too small)
 4. Clear, actionable titles
-
+5. Assign the most appropriate agent to each task
+{agents_section}
 Respond with JSON only (no markdown code fences):
-{
+{{
   "tasks": [
-    {
+    {{
       "title": "Task title",
       "description": "Brief description of what needs to be done",
       "priority": 1,
-      "estimated_complexity": "low|medium|high"
-    }
+      "estimated_complexity": "low|medium|high",
+      "agent_slug": "code"
+    }}
   ]
-}"""
+}}"""
+
+
+AI_DECOMPOSE_SYSTEM_PROMPT = build_decompose_prompt([])
 
 
 @app.post("/api/local-claude/ai/decompose-version")
@@ -3136,6 +3155,9 @@ async def ai_decompose_version(request: AIDecomposeVersionRequest):
             detail="Claude Code CLI not found. Install with: npm install -g @anthropic-ai/claude-code"
         )
 
+    # Build prompt with available agents for assignment
+    system_prompt = build_decompose_prompt(request.available_agents)
+
     user_message = f"""Version to decompose:
 - Key: {request.version_key}
 - Label: {request.version_label}
@@ -3146,7 +3168,7 @@ Existing tasks in this version:
 
 Please suggest additional tasks that should be created for this version."""
 
-    full_prompt = f"""{AI_DECOMPOSE_SYSTEM_PROMPT}
+    full_prompt = f"""{system_prompt}
 
 ---
 
@@ -3363,6 +3385,196 @@ Please generate approximately 10 actionable tasks for this version."""
     except Exception as e:
         print(f"[AI Plan] Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# Agent Definitions CRUD (Custom AI Personas)
+# =============================================================================
+
+# In-memory store for agent definitions (local mode)
+_agent_definitions: Dict[str, dict] = {}
+
+# Default agent definitions
+DEFAULT_AGENT_DEFINITIONS = [
+    {
+        "id": "default-code",
+        "slug": "code",
+        "name": "Code Agent",
+        "description": "General-purpose coding agent",
+        "system_prompt": "You are a skilled software engineer. Focus on writing clean, efficient, and well-documented code.",
+        "color": "#3b82f6",
+        "icon": "code",
+        "is_default": True,
+        "sort_order": 0
+    },
+    {
+        "id": "default-test",
+        "slug": "test",
+        "name": "Test Agent",
+        "description": "Test writing and QA specialist",
+        "system_prompt": "You are a QA engineer specializing in writing comprehensive tests. Focus on edge cases, error handling, and test coverage.",
+        "color": "#22c55e",
+        "icon": "check",
+        "is_default": True,
+        "sort_order": 1
+    },
+    {
+        "id": "default-docs",
+        "slug": "docs",
+        "name": "Docs Agent",
+        "description": "Documentation specialist",
+        "system_prompt": "You are a technical writer. Focus on clear, comprehensive documentation that helps developers understand the codebase.",
+        "color": "#f97316",
+        "icon": "book",
+        "is_default": True,
+        "sort_order": 2
+    },
+    {
+        "id": "default-refactor",
+        "slug": "refactor",
+        "name": "Refactor Agent",
+        "description": "Code refactoring specialist",
+        "system_prompt": "You are a code refactoring specialist. Focus on improving code structure, reducing complexity, and enhancing maintainability without changing functionality.",
+        "color": "#a855f7",
+        "icon": "refresh",
+        "is_default": True,
+        "sort_order": 3
+    }
+]
+
+
+class AgentDefinitionCreate(BaseModel):
+    """Request to create an agent definition."""
+    name: str
+    slug: Optional[str] = None
+    description: Optional[str] = ""
+    system_prompt: Optional[str] = ""
+    color: Optional[str] = "#6366f1"
+    icon: Optional[str] = "bot"
+    is_default: Optional[bool] = False
+    sort_order: Optional[int] = 0
+    project_id: Optional[str] = None
+
+
+class AgentDefinitionUpdate(BaseModel):
+    """Request to update an agent definition."""
+    name: Optional[str] = None
+    slug: Optional[str] = None
+    description: Optional[str] = None
+    system_prompt: Optional[str] = None
+    color: Optional[str] = None
+    icon: Optional[str] = None
+    is_default: Optional[bool] = None
+    sort_order: Optional[int] = None
+
+
+def _generate_agent_slug(name: str) -> str:
+    """Generate a slug from a name."""
+    slug = name.lower()
+    slug = re.sub(r'[^a-z0-9\s-]', '', slug)
+    slug = re.sub(r'\s+', '-', slug)
+    slug = re.sub(r'-+', '-', slug)
+    return slug[:50].rstrip('-')
+
+
+def _init_default_agent_definitions():
+    """Initialize default agent definitions if not already present."""
+    for agent in DEFAULT_AGENT_DEFINITIONS:
+        if agent["id"] not in _agent_definitions:
+            _agent_definitions[agent["id"]] = {
+                **agent,
+                "created_at": datetime.utcnow().isoformat(),
+                "updated_at": datetime.utcnow().isoformat()
+            }
+
+
+# Initialize defaults on import
+_init_default_agent_definitions()
+
+
+@app.get("/api/local-claude/agent-definitions")
+def list_agent_definitions(project_id: Optional[str] = None):
+    """List all agent definitions."""
+    agents = list(_agent_definitions.values())
+
+    # Filter by project_id if provided
+    if project_id:
+        agents = [a for a in agents if a.get("project_id") == project_id or a.get("is_default")]
+
+    # Sort by sort_order, then by created_at
+    agents.sort(key=lambda x: (x.get("sort_order", 0), x.get("created_at", "")))
+
+    return {"success": True, "agents": agents}
+
+
+@app.post("/api/local-claude/agent-definitions")
+def create_agent_definition(request: AgentDefinitionCreate):
+    """Create a new agent definition."""
+    agent_id = str(uuid.uuid4())
+    slug = request.slug or _generate_agent_slug(request.name)
+    now = datetime.utcnow().isoformat()
+
+    agent = {
+        "id": agent_id,
+        "name": request.name,
+        "slug": slug,
+        "description": request.description or "",
+        "system_prompt": request.system_prompt or "",
+        "color": request.color or "#6366f1",
+        "icon": request.icon or "bot",
+        "is_default": request.is_default or False,
+        "sort_order": request.sort_order or 0,
+        "project_id": request.project_id,
+        "created_at": now,
+        "updated_at": now
+    }
+
+    _agent_definitions[agent_id] = agent
+    return {"success": True, "agent": agent}
+
+
+@app.get("/api/local-claude/agent-definitions/{agent_id}")
+def get_agent_definition(agent_id: str):
+    """Get a specific agent definition."""
+    agent = _agent_definitions.get(agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent definition not found")
+    return {"success": True, "agent": agent}
+
+
+@app.put("/api/local-claude/agent-definitions/{agent_id}")
+def update_agent_definition(agent_id: str, request: AgentDefinitionUpdate):
+    """Update an agent definition."""
+    agent = _agent_definitions.get(agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent definition not found")
+
+    # Update fields
+    update_data = request.dict(exclude_unset=True)
+    if "name" in update_data and "slug" not in update_data:
+        update_data["slug"] = _generate_agent_slug(update_data["name"])
+
+    for key, value in update_data.items():
+        agent[key] = value
+
+    agent["updated_at"] = datetime.utcnow().isoformat()
+
+    return {"success": True, "agent": agent}
+
+
+@app.delete("/api/local-claude/agent-definitions/{agent_id}")
+def delete_agent_definition(agent_id: str):
+    """Delete an agent definition."""
+    if agent_id not in _agent_definitions:
+        raise HTTPException(status_code=404, detail="Agent definition not found")
+
+    # Don't allow deleting default agents
+    agent = _agent_definitions[agent_id]
+    if agent.get("is_default") and agent["id"].startswith("default-"):
+        raise HTTPException(status_code=400, detail="Cannot delete built-in default agents")
+
+    del _agent_definitions[agent_id]
+    return {"success": True, "deleted": agent_id}
 
 
 # =============================================================================
