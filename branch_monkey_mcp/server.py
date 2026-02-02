@@ -1658,6 +1658,198 @@ def monkey_task_similar_contexts(task_id: str) -> str:
 
 
 # ============================================================
+# AGENT DEFINITIONS
+# ============================================================
+
+@mcp.tool()
+def monkey_agent_list() -> str:
+    """List all agent definitions for the current project.
+
+    Agents are custom AI personas with system prompts that can be assigned to tasks.
+    Requires a project to be focused first using monkey_project_focus.
+    """
+    if not CURRENT_PROJECT_ID:
+        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first.\n\nUse `monkey_project_list` to see available projects."
+
+    try:
+        endpoint = f"/api/agent-definitions?project_id={CURRENT_PROJECT_ID}"
+        result = api_get(endpoint)
+        agents = result.get("agents", [])
+
+        if not agents:
+            return f"No agents found for project **{CURRENT_PROJECT_NAME}**."
+
+        output = f"# Agent Definitions (Project: {CURRENT_PROJECT_NAME})\n\n"
+        for a in agents:
+            is_default = "✓" if a.get('is_default') else ""
+            tools_info = ""
+            if a.get('allowed_tools') is not None:
+                tool_count = len(a.get('allowed_tools', []))
+                tools_info = f" | {tool_count} tools enabled"
+            output += f"- **{a.get('name')}** (`{a.get('slug')}`) {is_default}{tools_info}\n"
+            output += f"   {a.get('description', '')}\n"
+            output += f"   Color: {a.get('color', '#6366f1')} | ID: `{a.get('id')}`\n\n"
+
+        return output
+    except Exception as e:
+        return f"Error fetching agents: {str(e)}"
+
+
+@mcp.tool()
+def monkey_agent_create(
+    name: str,
+    system_prompt: str,
+    description: str = "",
+    color: str = "#6366f1",
+    icon: str = "bot",
+    allowed_tools: str = None
+) -> str:
+    """Create a new agent definition in the current project.
+
+    Args:
+        name: Display name for the agent
+        system_prompt: The system prompt that defines agent behavior
+        description: Short description of what this agent does
+        color: Hex color for the agent (default: #6366f1)
+        icon: Icon name (default: bot)
+        allowed_tools: Comma-separated list of tool keys, or None for all tools
+
+    Requires a project to be focused first using monkey_project_focus.
+    """
+    if not CURRENT_PROJECT_ID:
+        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
+
+    try:
+        payload = {
+            "name": name,
+            "system_prompt": system_prompt,
+            "description": description,
+            "color": color,
+            "icon": icon,
+            "project_id": CURRENT_PROJECT_ID
+        }
+
+        if allowed_tools is not None:
+            payload["allowed_tools"] = [t.strip() for t in allowed_tools.split(",") if t.strip()]
+
+        result = api_post("/api/agent-definitions", payload)
+        agent = result.get("agent", result)
+        return f"✅ Created agent: **{name}** (slug: `{agent.get('slug')}`, ID: `{agent.get('id')}`) in project {CURRENT_PROJECT_NAME}"
+    except Exception as e:
+        return f"Error creating agent: {str(e)}"
+
+
+@mcp.tool()
+def monkey_agent_get(agent_id: str) -> str:
+    """Get a specific agent definition by ID.
+
+    Args:
+        agent_id: The UUID of the agent to retrieve
+    """
+    try:
+        result = api_get(f"/api/agent-definitions/{agent_id}")
+        agent = result.get("agent", {})
+
+        if not agent:
+            return f"❌ Agent not found: {agent_id}"
+
+        output = f"# Agent: {agent.get('name')}\n\n"
+        output += f"**ID:** `{agent.get('id')}`\n"
+        output += f"**Slug:** `{agent.get('slug')}`\n"
+        output += f"**Description:** {agent.get('description', 'N/A')}\n"
+        output += f"**Color:** {agent.get('color', '#6366f1')}\n"
+        output += f"**Icon:** {agent.get('icon', 'bot')}\n"
+        output += f"**Default:** {'Yes' if agent.get('is_default') else 'No'}\n"
+        output += f"**Created:** {agent.get('created_at', '')[:19]}\n"
+        output += f"**Updated:** {agent.get('updated_at', '')[:19]}\n\n"
+
+        # Tool access info
+        allowed_tools = agent.get('allowed_tools')
+        if allowed_tools is None:
+            output += "**Tool Access:** All tools enabled\n\n"
+        elif len(allowed_tools) == 0:
+            output += "**Tool Access:** No tools enabled\n\n"
+        else:
+            output += f"**Tool Access:** {len(allowed_tools)} tools enabled\n"
+            output += f"   {', '.join(allowed_tools[:10])}"
+            if len(allowed_tools) > 10:
+                output += f" ... and {len(allowed_tools) - 10} more"
+            output += "\n\n"
+
+        output += f"## System Prompt\n\n```\n{agent.get('system_prompt', '')}\n```\n"
+
+        return output
+    except Exception as e:
+        return f"Error fetching agent: {str(e)}"
+
+
+@mcp.tool()
+def monkey_agent_update(
+    agent_id: str,
+    name: str = None,
+    description: str = None,
+    system_prompt: str = None,
+    color: str = None,
+    icon: str = None,
+    allowed_tools: str = None
+) -> str:
+    """Update an existing agent definition.
+
+    Args:
+        agent_id: The UUID of the agent to update
+        name: New display name (optional)
+        description: New description (optional)
+        system_prompt: New system prompt (optional)
+        color: New hex color (optional)
+        icon: New icon name (optional)
+        allowed_tools: Comma-separated list of tool keys, or "all" for all tools, or "none" for no tools (optional)
+    """
+    try:
+        updates = {}
+        if name is not None:
+            updates["name"] = name
+        if description is not None:
+            updates["description"] = description
+        if system_prompt is not None:
+            updates["system_prompt"] = system_prompt
+        if color is not None:
+            updates["color"] = color
+        if icon is not None:
+            updates["icon"] = icon
+        if allowed_tools is not None:
+            if allowed_tools.lower() == "all":
+                updates["allowed_tools"] = None
+            elif allowed_tools.lower() == "none":
+                updates["allowed_tools"] = []
+            else:
+                updates["allowed_tools"] = [t.strip() for t in allowed_tools.split(",") if t.strip()]
+
+        if not updates:
+            return "No updates provided."
+
+        api_put(f"/api/agent-definitions/{agent_id}", updates)
+        return f"✅ Updated agent {agent_id}"
+    except Exception as e:
+        return f"Error updating agent: {str(e)}"
+
+
+@mcp.tool()
+def monkey_agent_delete(agent_id: str) -> str:
+    """Delete an agent definition by ID.
+
+    Args:
+        agent_id: The UUID of the agent to delete
+
+    Note: Default agents (is_default=true) cannot be deleted.
+    """
+    try:
+        api_delete(f"/api/agent-definitions/{agent_id}")
+        return f"✅ Deleted agent {agent_id}"
+    except Exception as e:
+        return f"Error deleting agent: {str(e)}"
+
+
+# ============================================================
 # MAIN
 # ============================================================
 
