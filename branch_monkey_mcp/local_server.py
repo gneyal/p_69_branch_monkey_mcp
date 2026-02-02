@@ -3171,15 +3171,24 @@ async def ai_decompose_version(request: AIDecomposeVersionRequest):
     system_prompt = build_decompose_prompt(request.available_agents)
     log_timing("Prompt built")
 
-    user_message = f"""Version to decompose:
-- Key: {request.version_key}
-- Label: {request.version_label}
-- Description: {request.description or 'No description provided'}
+    # Format existing tasks more clearly
+    existing_tasks_text = "None"
+    if request.existing_tasks:
+        tasks_list = []
+        for t in request.existing_tasks[:20]:  # Limit to 20 tasks
+            status = t.get('status', 'unknown')
+            title = t.get('title', 'Untitled')
+            tasks_list.append(f"  - [{status}] {title}")
+        existing_tasks_text = "\n".join(tasks_list) if tasks_list else "None"
 
-Existing tasks in this version:
-{json.dumps(request.existing_tasks, indent=2) if request.existing_tasks else 'None'}
+    user_message = f"""FEATURE TO PLAN: {request.description or request.version_label or request.version_key}
 
-Please suggest additional tasks that should be created for this version."""
+Version: {request.version_label or request.version_key}
+
+Existing tasks (do NOT duplicate these):
+{existing_tasks_text}
+
+Generate NEW tasks needed to implement this feature. Remember: respond with ONLY JSON, no other text."""
 
     full_prompt = f"""{system_prompt}
 
@@ -3578,23 +3587,31 @@ DEFAULT_AGENT_DEFINITIONS = [
         "slug": "planner",
         "name": "Planner Agent",
         "description": "Plans versions and decomposes features into tasks",
-        "system_prompt": """You are a project planning assistant. Break down a version/milestone into actionable tasks.
+        "system_prompt": """You are a project planning assistant. Your job is to break down a version/milestone into actionable development tasks.
 
-Consider:
-1. What already exists (existing tasks)
-2. Logical dependencies between tasks
-3. Appropriate granularity (not too big, not too small)
-4. Clear, actionable titles
-5. Assign the most appropriate agent to each task based on task type
+IMPORTANT: You MUST respond with ONLY valid JSON. No explanations, no markdown, no text before or after the JSON.
 
-Respond with JSON only (no markdown code fences):
+Rules:
+1. Generate 5-12 concrete, actionable tasks for the requested feature/version
+2. Each task should be completable in 1-4 hours of focused work
+3. Order tasks by dependency (what needs to be done first)
+4. Assign the most appropriate agent_slug based on task type:
+   - "code": Implementation, features, bug fixes, API endpoints
+   - "test": Writing tests, QA validation, test coverage
+   - "docs": Documentation, README updates, comments
+   - "refactor": Code cleanup, optimization, restructuring
+5. Do NOT include tasks that already exist (check existing_tasks)
+6. Do NOT suggest meta-tasks like "plan" or "review" - suggest concrete implementation tasks
+7. Focus on the specific feature requested, not general project improvements
+
+Your response must be EXACTLY this JSON structure (no other text):
 {
   "tasks": [
     {
-      "title": "Task title",
-      "description": "Brief description of what needs to be done",
+      "title": "Implement user login endpoint",
+      "description": "Create POST /api/auth/login endpoint with email/password validation",
       "priority": 1,
-      "estimated_complexity": "low|medium|high",
+      "estimated_complexity": "medium",
       "agent_slug": "code"
     }
   ]
