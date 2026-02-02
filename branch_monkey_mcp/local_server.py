@@ -2940,6 +2940,432 @@ def list_time_machine_previews():
 
 
 # =============================================================================
+# AI Suggestion Endpoints (uses local Claude Code CLI)
+# =============================================================================
+
+class AISuggestVersionRequest(BaseModel):
+    """Request for AI version suggestion."""
+    project_id: str
+    versions: List[dict]
+    tasks: List[dict]
+
+
+AI_SUGGEST_SYSTEM_PROMPT = """You are a project planning assistant. Analyze the project's versions and tasks to suggest which version the user should focus on next.
+
+Consider:
+1. Tasks that are almost complete (prioritize finishing what's started)
+2. Task dependencies and logical order
+3. Business impact and value delivery
+4. Current workload distribution
+
+Respond with JSON only (no markdown code fences):
+{
+  "versionKey": "the_version_key",
+  "versionLabel": "Human Readable Name",
+  "reason": "Brief explanation (1-2 sentences) of why this version should be the focus",
+  "confidence": 0.0-1.0
+}"""
+
+
+@app.post("/api/local-claude/ai/suggest-version")
+async def ai_suggest_version(request: AISuggestVersionRequest):
+    """Get AI suggestion for which version to work on next.
+
+    Uses local Claude Code CLI to analyze project and suggest a version.
+    This runs through the user's local Claude subscription.
+    """
+    # Check if claude is installed
+    claude_path = shutil.which("claude")
+    if not claude_path:
+        raise HTTPException(
+            status_code=400,
+            detail="Claude Code CLI not found. Install with: npm install -g @anthropic-ai/claude-code"
+        )
+
+    if not request.versions:
+        raise HTTPException(status_code=400, detail="No versions provided")
+
+    # Build context for AI
+    versions_context = []
+    for v in request.versions:
+        version_tasks = [t for t in request.tasks if t.get('version') == v.get('key')]
+        todo_count = len([t for t in version_tasks if t.get('status') == 'todo'])
+        in_progress_count = len([t for t in version_tasks if t.get('status') == 'in_progress'])
+        done_count = len([t for t in version_tasks if t.get('status') == 'done'])
+        total = len(version_tasks)
+
+        versions_context.append({
+            "key": v.get('key'),
+            "label": v.get('label'),
+            "tasks": {
+                "total": total,
+                "todo": todo_count,
+                "inProgress": in_progress_count,
+                "done": done_count,
+            },
+            "percentComplete": round((done_count / total) * 100) if total > 0 else 0,
+        })
+
+    user_message = f"""Project versions and their status:
+{json.dumps(versions_context, indent=2)}
+
+Which version should be the focus for today? Prioritize versions that have work in progress or are close to completion."""
+
+    # Build the full prompt
+    full_prompt = f"""{AI_SUGGEST_SYSTEM_PROMPT}
+
+---
+
+{user_message}"""
+
+    try:
+        # Run Claude in print mode to get suggestion
+        env = os.environ.copy()
+        env.pop("ANTHROPIC_API_KEY", None)  # Use user's subscription
+
+        cmd = [
+            "claude",
+            "-p", full_prompt,
+            "--output-format", "json",
+            "--dangerously-skip-permissions"
+        ]
+
+        print(f"[AI Suggest] Running Claude CLI for version suggestion")
+
+        result = subprocess.run(
+            cmd,
+            cwd=get_default_working_dir(),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60  # 60 second timeout
+        )
+
+        if result.returncode != 0:
+            print(f"[AI Suggest] Claude CLI error: {result.stderr}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Claude CLI error: {result.stderr[:200]}"
+            )
+
+        # Parse the JSON response
+        output = result.stdout.strip()
+        print(f"[AI Suggest] Claude output: {output[:200]}...")
+
+        # Try to parse as JSON
+        try:
+            # First try to parse the entire output as JSON
+            response_data = json.loads(output)
+            # If it's a Claude response wrapper, extract the result
+            if "result" in response_data:
+                suggestion_text = response_data["result"]
+            else:
+                suggestion_text = output
+        except json.JSONDecodeError:
+            suggestion_text = output
+
+        # Now parse the suggestion JSON
+        try:
+            if isinstance(suggestion_text, str):
+                suggestion = json.loads(suggestion_text)
+            else:
+                suggestion = suggestion_text
+        except json.JSONDecodeError:
+            # Try to extract JSON from response if it has extra text
+            json_match = re.search(r'\{[\s\S]*\}', suggestion_text if isinstance(suggestion_text, str) else output)
+            if json_match:
+                suggestion = json.loads(json_match.group())
+            else:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Could not parse AI response as JSON"
+                )
+
+        return {"success": True, "suggestion": suggestion}
+
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Claude CLI timed out")
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[AI Suggest] Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class AIDecomposeVersionRequest(BaseModel):
+    """Request for AI task decomposition."""
+    project_id: str
+    version_key: str
+    version_label: str
+    description: Optional[str] = None
+    existing_tasks: List[dict] = []
+
+
+AI_DECOMPOSE_SYSTEM_PROMPT = """You are a project planning assistant. Break down a version/milestone into actionable tasks.
+
+Consider:
+1. What already exists (existing tasks)
+2. Logical dependencies between tasks
+3. Appropriate granularity (not too big, not too small)
+4. Clear, actionable titles
+
+Respond with JSON only (no markdown code fences):
+{
+  "tasks": [
+    {
+      "title": "Task title",
+      "description": "Brief description of what needs to be done",
+      "priority": 1,
+      "estimated_complexity": "low|medium|high"
+    }
+  ]
+}"""
+
+
+@app.post("/api/local-claude/ai/decompose-version")
+async def ai_decompose_version(request: AIDecomposeVersionRequest):
+    """Decompose a version into tasks using AI.
+
+    Uses local Claude Code CLI to analyze and suggest tasks.
+    """
+    # Check if claude is installed
+    claude_path = shutil.which("claude")
+    if not claude_path:
+        raise HTTPException(
+            status_code=400,
+            detail="Claude Code CLI not found. Install with: npm install -g @anthropic-ai/claude-code"
+        )
+
+    user_message = f"""Version to decompose:
+- Key: {request.version_key}
+- Label: {request.version_label}
+- Description: {request.description or 'No description provided'}
+
+Existing tasks in this version:
+{json.dumps(request.existing_tasks, indent=2) if request.existing_tasks else 'None'}
+
+Please suggest additional tasks that should be created for this version."""
+
+    full_prompt = f"""{AI_DECOMPOSE_SYSTEM_PROMPT}
+
+---
+
+{user_message}"""
+
+    try:
+        env = os.environ.copy()
+        env.pop("ANTHROPIC_API_KEY", None)
+
+        cmd = [
+            "claude",
+            "-p", full_prompt,
+            "--output-format", "json",
+            "--dangerously-skip-permissions"
+        ]
+
+        print(f"[AI Decompose] Running Claude CLI for task decomposition")
+
+        result = subprocess.run(
+            cmd,
+            cwd=get_default_working_dir(),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=90
+        )
+
+        if result.returncode != 0:
+            print(f"[AI Decompose] Claude CLI error: {result.stderr}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Claude CLI error: {result.stderr[:200]}"
+            )
+
+        output = result.stdout.strip()
+        print(f"[AI Decompose] Claude output: {output[:200]}...")
+
+        # Parse response
+        try:
+            response_data = json.loads(output)
+            if "result" in response_data:
+                tasks_text = response_data["result"]
+            else:
+                tasks_text = output
+        except json.JSONDecodeError:
+            tasks_text = output
+
+        try:
+            if isinstance(tasks_text, str):
+                tasks_data = json.loads(tasks_text)
+            else:
+                tasks_data = tasks_text
+        except json.JSONDecodeError:
+            json_match = re.search(r'\{[\s\S]*\}', tasks_text if isinstance(tasks_text, str) else output)
+            if json_match:
+                tasks_data = json.loads(json_match.group())
+            else:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Could not parse AI response as JSON"
+                )
+
+        return {"success": True, "tasks": tasks_data.get("tasks", [])}
+
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Claude CLI timed out")
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[AI Decompose] Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# AI Plan Tasks - Generate tasks for a version
+# =============================================================================
+
+class AIPlanTasksRequest(BaseModel):
+    """Request for AI task planning."""
+    project_id: str
+    version_key: Optional[str] = None
+    version_label: Optional[str] = None
+    topic: Optional[str] = None
+    existing_tasks: List[dict] = []
+
+
+AI_PLAN_SYSTEM_PROMPT = """You are a project planning assistant. Generate actionable development tasks for a version/milestone.
+
+Guidelines:
+1. Create approximately 10 concrete, actionable tasks
+2. Each task should be completable in a single work session
+3. Include a mix of implementation, testing, and polish tasks
+4. Assign appropriate agent types: code, test, docs, or refactor
+5. Consider dependencies - order tasks logically
+
+Agent types:
+- code: Features, bug fixes, implementation work
+- test: Writing tests, QA, validation
+- docs: Documentation, comments, guides
+- refactor: Code cleanup, performance optimization
+
+Respond with JSON only:
+{
+  "tasks": [
+    {"title": "Task title", "description": "Brief description", "agentTypeId": "code"},
+    ...
+  ]
+}"""
+
+
+@app.post("/api/local-claude/ai/plan-tasks")
+async def ai_plan_tasks(request: AIPlanTasksRequest):
+    """Generate tasks for a version using AI.
+
+    Uses local Claude Code CLI to analyze project context and generate tasks.
+    """
+    # Check if claude is installed
+    claude_path = shutil.which("claude")
+    if not claude_path:
+        raise HTTPException(
+            status_code=400,
+            detail="Claude Code CLI not found. Install with: npm install -g @anthropic-ai/claude-code"
+        )
+
+    # Build context about what we're planning
+    version_info = ""
+    if request.version_key:
+        version_info = f"Target version: {request.version_label or request.version_key}"
+    else:
+        version_info = "Target: Next logical version for the project"
+
+    topic_info = ""
+    if request.topic:
+        topic_info = f"\nFocus area: {request.topic}"
+
+    existing_info = ""
+    if request.existing_tasks:
+        existing_info = f"\n\nExisting tasks in project:\n{json.dumps(request.existing_tasks[:20], indent=2)}"
+
+    user_message = f"""{version_info}{topic_info}{existing_info}
+
+Please generate approximately 10 actionable tasks for this version."""
+
+    full_prompt = f"""{AI_PLAN_SYSTEM_PROMPT}
+
+---
+
+{user_message}"""
+
+    try:
+        env = os.environ.copy()
+        env.pop("ANTHROPIC_API_KEY", None)
+
+        cmd = [
+            "claude",
+            "-p", full_prompt,
+            "--output-format", "json",
+            "--dangerously-skip-permissions"
+        ]
+
+        print(f"[AI Plan] Running Claude CLI for task planning: {version_info}")
+
+        result = subprocess.run(
+            cmd,
+            cwd=get_default_working_dir(),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=90
+        )
+
+        if result.returncode != 0:
+            print(f"[AI Plan] Claude CLI error: {result.stderr}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Claude CLI error: {result.stderr[:200]}"
+            )
+
+        output = result.stdout.strip()
+        print(f"[AI Plan] Claude output: {output[:200]}...")
+
+        # Parse response
+        try:
+            response_data = json.loads(output)
+            if "result" in response_data:
+                tasks_text = response_data["result"]
+            else:
+                tasks_text = output
+        except json.JSONDecodeError:
+            tasks_text = output
+
+        # Extract tasks from response
+        try:
+            if isinstance(tasks_text, str):
+                tasks_data = json.loads(tasks_text)
+            else:
+                tasks_data = tasks_text
+        except json.JSONDecodeError:
+            json_match = re.search(r'\{[\s\S]*\}', tasks_text if isinstance(tasks_text, str) else output)
+            if json_match:
+                tasks_data = json.loads(json_match.group())
+            else:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Could not parse AI response as JSON"
+                )
+
+        return {"success": True, "tasks": tasks_data.get("tasks", [])}
+
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Claude CLI timed out")
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[AI Plan] Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
 # Server Runner
 # =============================================================================
 
