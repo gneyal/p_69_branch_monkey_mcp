@@ -3204,16 +3204,36 @@ Please suggest additional tasks that should be created for this version."""
         log_timing(f"Starting subprocess: claude -p '...' --output-format json")
         print(f"[AI Decompose] Working directory: {get_default_working_dir()}")
 
-        result = subprocess.run(
-            cmd,
+        # Use asyncio subprocess to avoid blocking the event loop
+        import asyncio
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
             cwd=get_default_working_dir(),
             env=env,
-            capture_output=True,
-            text=True,
-            timeout=90
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
         )
 
-        log_timing(f"Subprocess completed, return code: {result.returncode}")
+        try:
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=90)
+            result_stdout = stdout.decode() if stdout else ""
+            result_stderr = stderr.decode() if stderr else ""
+            result_returncode = process.returncode
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
+            raise subprocess.TimeoutExpired(cmd, 90)
+
+        log_timing(f"Subprocess completed, return code: {result_returncode}")
+
+        # Create a result-like object for compatibility
+        class SubprocessResult:
+            def __init__(self, returncode, stdout, stderr):
+                self.returncode = returncode
+                self.stdout = stdout
+                self.stderr = stderr
+
+        result = SubprocessResult(result_returncode, result_stdout, result_stderr)
 
         if result.returncode != 0:
             print(f"[AI Decompose] Claude CLI error: {result.stderr}")
