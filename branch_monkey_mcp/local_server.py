@@ -3102,40 +3102,44 @@ class AIDecomposeVersionRequest(BaseModel):
     available_agents: List[dict] = []
 
 
+def get_planner_agent(available_agents: List[dict]) -> dict:
+    """Get the planner agent from available agents or defaults."""
+    # Look for planner in provided agents
+    for agent in available_agents:
+        if agent.get('slug') == 'planner':
+            return agent
+    # Fall back to default planner
+    for agent in DEFAULT_AGENT_DEFINITIONS:
+        if agent.get('slug') == 'planner':
+            return agent
+    # Last resort - return a basic planner config
+    return DEFAULT_AGENT_DEFINITIONS[0]
+
+
 def build_decompose_prompt(available_agents: List[dict]) -> str:
-    """Build the AI decomposition prompt with available agents."""
+    """Build the AI decomposition prompt using the Planner agent."""
+    # Get planner agent's system prompt
+    planner = get_planner_agent(available_agents)
+    base_prompt = planner.get('system_prompt', '')
+
+    # Filter out planner from task assignment agents
+    task_agents = [a for a in available_agents if a.get('slug') != 'planner']
+    if not task_agents:
+        task_agents = [a for a in DEFAULT_AGENT_DEFINITIONS if a.get('slug') != 'planner']
+
+    # Build agents section for task assignment
     agents_section = ""
-    if available_agents:
+    if task_agents:
         agent_list = "\n".join([
             f"  - slug: \"{a.get('slug')}\", name: \"{a.get('name')}\", purpose: \"{a.get('description', '')}\""
-            for a in available_agents
+            for a in task_agents
         ])
         agents_section = f"""
-Available agents (assign the most appropriate one to each task based on task type):
-{agent_list}
-"""
 
-    return f"""You are a project planning assistant. Break down a version/milestone into actionable tasks.
+Available agents for task assignment:
+{agent_list}"""
 
-Consider:
-1. What already exists (existing tasks)
-2. Logical dependencies between tasks
-3. Appropriate granularity (not too big, not too small)
-4. Clear, actionable titles
-5. Assign the most appropriate agent to each task
-{agents_section}
-Respond with JSON only (no markdown code fences):
-{{
-  "tasks": [
-    {{
-      "title": "Task title",
-      "description": "Brief description of what needs to be done",
-      "priority": 1,
-      "estimated_complexity": "low|medium|high",
-      "agent_slug": "code"
-    }}
-  ]
-}}"""
+    return f"{base_prompt}{agents_section}"
 
 
 AI_DECOMPOSE_SYSTEM_PROMPT = build_decompose_prompt([])
@@ -3397,6 +3401,37 @@ _agent_definitions: Dict[str, dict] = {}
 # Default agent definitions
 DEFAULT_AGENT_DEFINITIONS = [
     {
+        "id": "default-planner",
+        "slug": "planner",
+        "name": "Planner Agent",
+        "description": "Plans versions and decomposes features into tasks",
+        "system_prompt": """You are a project planning assistant. Break down a version/milestone into actionable tasks.
+
+Consider:
+1. What already exists (existing tasks)
+2. Logical dependencies between tasks
+3. Appropriate granularity (not too big, not too small)
+4. Clear, actionable titles
+5. Assign the most appropriate agent to each task based on task type
+
+Respond with JSON only (no markdown code fences):
+{
+  "tasks": [
+    {
+      "title": "Task title",
+      "description": "Brief description of what needs to be done",
+      "priority": 1,
+      "estimated_complexity": "low|medium|high",
+      "agent_slug": "code"
+    }
+  ]
+}""",
+        "color": "#ec4899",
+        "icon": "sparkles",
+        "is_default": True,
+        "sort_order": 0
+    },
+    {
         "id": "default-code",
         "slug": "code",
         "name": "Code Agent",
@@ -3405,7 +3440,7 @@ DEFAULT_AGENT_DEFINITIONS = [
         "color": "#3b82f6",
         "icon": "code",
         "is_default": True,
-        "sort_order": 0
+        "sort_order": 1
     },
     {
         "id": "default-test",
@@ -3416,7 +3451,7 @@ DEFAULT_AGENT_DEFINITIONS = [
         "color": "#22c55e",
         "icon": "check",
         "is_default": True,
-        "sort_order": 1
+        "sort_order": 2
     },
     {
         "id": "default-docs",
@@ -3427,7 +3462,7 @@ DEFAULT_AGENT_DEFINITIONS = [
         "color": "#f97316",
         "icon": "book",
         "is_default": True,
-        "sort_order": 2
+        "sort_order": 3
     },
     {
         "id": "default-refactor",
@@ -3438,7 +3473,7 @@ DEFAULT_AGENT_DEFINITIONS = [
         "color": "#a855f7",
         "icon": "refresh",
         "is_default": True,
-        "sort_order": 3
+        "sort_order": 4
     }
 ]
 
