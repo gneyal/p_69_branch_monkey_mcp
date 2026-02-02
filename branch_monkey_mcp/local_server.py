@@ -3142,9 +3142,6 @@ Available agents for task assignment:
     return f"{base_prompt}{agents_section}"
 
 
-AI_DECOMPOSE_SYSTEM_PROMPT = build_decompose_prompt([])
-
-
 @app.post("/api/local-claude/ai/decompose-version")
 async def ai_decompose_version(request: AIDecomposeVersionRequest):
     """Decompose a version into tasks using AI.
