@@ -730,17 +730,19 @@ class RelayClient:
         url = f"http://127.0.0.1:{self.local_port}{path}"
 
         try:
+            # Longer timeout for POST/PUT/PATCH as they may involve AI operations
+            read_timeout = 55 if method == "GET" else 180
             async with httpx.AsyncClient() as client:
                 if method == "GET":
-                    response = await client.get(url, headers=headers, timeout=55)
+                    response = await client.get(url, headers=headers, timeout=read_timeout)
                 elif method == "POST":
-                    response = await client.post(url, json=body, headers=headers, timeout=55)
+                    response = await client.post(url, json=body, headers=headers, timeout=read_timeout)
                 elif method == "PUT":
-                    response = await client.put(url, json=body, headers=headers, timeout=55)
+                    response = await client.put(url, json=body, headers=headers, timeout=read_timeout)
                 elif method == "DELETE":
-                    response = await client.delete(url, headers=headers, timeout=55)
+                    response = await client.delete(url, headers=headers, timeout=read_timeout)
                 elif method == "PATCH":
-                    response = await client.patch(url, json=body, headers=headers, timeout=55)
+                    response = await client.patch(url, json=body, headers=headers, timeout=read_timeout)
                 else:
                     return {
                         "type": "response",
@@ -762,11 +764,14 @@ class RelayClient:
                 }
 
         except Exception as e:
+            import traceback
+            print(f"[Relay] Request handler exception: {type(e).__name__}: {e}")
+            traceback.print_exc()
             return {
                 "type": "response",
                 "id": request_id,
                 "status": 500,
-                "body": {"error": str(e)}
+                "body": {"error": str(e) or f"{type(e).__name__}: unknown error"}
             }
 
     def stop(self):
