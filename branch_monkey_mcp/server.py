@@ -1849,6 +1849,90 @@ def monkey_agent_delete(agent_id: str) -> str:
         return f"Error deleting agent: {str(e)}"
 
 
+@mcp.tool()
+def monkey_apply_agent(
+    agent_slug: str,
+    instructions: str,
+    context: str = None
+) -> str:
+    """Apply an agent to execute custom instructions.
+
+    Fetches the agent's system prompt from the database and executes it
+    with the provided instructions via the local relay.
+
+    Args:
+        agent_slug: The agent slug (e.g., "planner", "code", "test", "docs", "refactor")
+        instructions: The user instructions/task for the agent to execute
+        context: Optional JSON string with additional context (existing_tasks, project info, etc.)
+
+    Returns:
+        The agent's response/output
+
+    Example:
+        monkey_apply_agent(
+            agent_slug="planner",
+            instructions="Plan tasks for implementing user authentication with OAuth",
+            context='{"existing_tasks": [], "available_agents": ["code", "test", "docs"]}'
+        )
+    """
+    if not CURRENT_PROJECT_ID:
+        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
+
+    try:
+        # Fetch agent by slug from database
+        endpoint = f"/api/agent-definitions?project_id={CURRENT_PROJECT_ID}"
+        result = api_get(endpoint)
+        agents = result.get("agents", [])
+
+        # Find agent by slug
+        agent = None
+        for a in agents:
+            if a.get("slug") == agent_slug:
+                agent = a
+                break
+
+        if not agent:
+            return f"❌ Agent not found: {agent_slug}\n\nAvailable agents: {', '.join(a.get('slug', '') for a in agents)}"
+
+        # Build payload for relay
+        payload = {
+            "agent_id": agent.get("id"),
+            "agent_slug": agent_slug,
+            "agent_name": agent.get("name"),
+            "system_prompt": agent.get("system_prompt"),
+            "instructions": instructions,
+            "project_id": CURRENT_PROJECT_ID
+        }
+
+        # Parse and add context if provided
+        if context:
+            try:
+                import json
+                payload["context"] = json.loads(context) if isinstance(context, str) else context
+            except json.JSONDecodeError:
+                payload["context"] = {"raw": context}
+
+        # Send to relay for execution
+        result = api_post("/api/relay/apply-agent", payload)
+
+        if result.get("error"):
+            return f"❌ Agent execution failed: {result.get('error')}"
+
+        output = result.get("output", result.get("result", ""))
+
+        return f"""# Agent: {agent.get('name')} ({agent_slug})
+
+## Instructions
+{instructions}
+
+## Response
+{output}
+"""
+
+    except Exception as e:
+        return f"Error applying agent: {str(e)}"
+
+
 # ============================================================
 # MAIN
 # ============================================================

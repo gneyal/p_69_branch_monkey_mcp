@@ -3291,6 +3291,135 @@ Please suggest additional tasks that should be created for this version."""
 
 
 # =============================================================================
+# Apply Agent - Execute any agent with custom instructions
+# =============================================================================
+
+class ApplyAgentRequest(BaseModel):
+    """Request for applying an agent."""
+    agent_id: Optional[str] = None
+    agent_slug: str
+    agent_name: Optional[str] = None
+    system_prompt: str
+    instructions: str
+    context: Optional[dict] = None
+    project_id: Optional[str] = None
+
+
+@app.post("/api/local-claude/apply-agent")
+async def apply_agent(request: ApplyAgentRequest):
+    """Apply an agent's system prompt with custom instructions.
+
+    This is a generic endpoint that can execute any agent type.
+    """
+    import time
+    start_time = time.time()
+
+    def log_timing(step: str):
+        elapsed = time.time() - start_time
+        print(f"[Apply Agent] [{elapsed:.2f}s] {step}")
+
+    log_timing(f"Request received - Agent: {request.agent_slug}")
+
+    # Check if claude is installed
+    claude_path = shutil.which("claude")
+    if not claude_path:
+        raise HTTPException(
+            status_code=400,
+            detail="Claude Code CLI not found. Install with: npm install -g @anthropic-ai/claude-code"
+        )
+
+    log_timing(f"Claude CLI found at: {claude_path}")
+
+    # Build full prompt
+    context_str = ""
+    if request.context:
+        context_str = f"\n\nContext:\n{json.dumps(request.context, indent=2)}"
+
+    full_prompt = f"""{request.system_prompt}
+{context_str}
+---
+
+{request.instructions}"""
+
+    prompt_length = len(full_prompt)
+    log_timing(f"Full prompt ready ({prompt_length} chars)")
+
+    try:
+        env = os.environ.copy()
+        env.pop("ANTHROPIC_API_KEY", None)
+
+        cmd = [
+            "claude",
+            "-p", full_prompt,
+            "--output-format", "json",
+            "--dangerously-skip-permissions"
+        ]
+
+        log_timing(f"Starting subprocess: claude -p '...' --output-format json")
+        print(f"[Apply Agent] Working directory: {get_default_working_dir()}")
+
+        # Use asyncio subprocess to avoid blocking
+        import asyncio
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            cwd=get_default_working_dir(),
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+
+        try:
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=120)
+            result_stdout = stdout.decode() if stdout else ""
+            result_stderr = stderr.decode() if stderr else ""
+            result_returncode = process.returncode
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.wait()
+            log_timing("TIMEOUT - Claude CLI exceeded 120s limit")
+            raise HTTPException(status_code=504, detail="Claude CLI timed out after 120 seconds")
+
+        log_timing(f"Subprocess completed, return code: {result_returncode}")
+
+        if result_returncode != 0:
+            print(f"[Apply Agent] Claude CLI error: {result_stderr}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Claude CLI error: {result_stderr[:200]}"
+            )
+
+        output = result_stdout.strip()
+        log_timing(f"Got output ({len(output)} chars)")
+
+        # Parse JSON response
+        try:
+            response_data = json.loads(output)
+            if "result" in response_data:
+                result_text = response_data["result"]
+            else:
+                result_text = output
+        except json.JSONDecodeError:
+            result_text = output
+
+        log_timing(f"Done!")
+
+        return {
+            "success": True,
+            "agent_slug": request.agent_slug,
+            "agent_name": request.agent_name,
+            "output": result_text,
+            "execution_time": time.time() - start_time
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        log_timing(f"ERROR: {str(e)}")
+        print(f"[Apply Agent] Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
 # AI Plan Tasks - Generate tasks for a version
 # =============================================================================
 
