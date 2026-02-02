@@ -3100,10 +3100,12 @@ class AIDecomposeVersionRequest(BaseModel):
     description: Optional[str] = None
     existing_tasks: List[dict] = []
     available_agents: List[dict] = []
+    # System prompt can be passed directly from caller (from database)
+    system_prompt: Optional[str] = None
 
 
 def get_planner_agent(available_agents: List[dict]) -> dict:
-    """Get the planner agent from available agents or defaults."""
+    """Get the planner agent from available agents."""
     # Look for planner in provided agents
     for agent in available_agents:
         if agent.get('slug') == 'planner':
@@ -3167,9 +3169,13 @@ async def ai_decompose_version(request: AIDecomposeVersionRequest):
 
     log_timing(f"Claude CLI found at: {claude_path}")
 
-    # Build prompt with available agents for assignment
-    system_prompt = build_decompose_prompt(request.available_agents)
-    log_timing("Prompt built")
+    # Use passed system_prompt if provided, otherwise build from available_agents
+    if request.system_prompt:
+        system_prompt = request.system_prompt
+        log_timing("Using provided system_prompt from database")
+    else:
+        system_prompt = build_decompose_prompt(request.available_agents)
+        log_timing("Built prompt from available_agents (legacy fallback)")
 
     # Format existing tasks more clearly
     existing_tasks_text = "None"
