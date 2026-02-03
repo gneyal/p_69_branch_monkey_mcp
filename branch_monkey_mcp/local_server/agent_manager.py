@@ -1,0 +1,567 @@
+"""
+Local Agent Manager for Claude Code execution.
+
+This module manages the lifecycle of local Claude Code agent instances,
+including creation, execution, session resumption, and cleanup.
+"""
+
+import asyncio
+import json
+import os
+import shutil
+import signal
+import subprocess
+import uuid
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Dict, List, Optional
+
+from fastapi import HTTPException
+
+from .config import get_default_working_dir
+from .git_utils import is_git_repo, get_current_branch, generate_branch_name
+from .worktree import create_worktree, remove_worktree
+
+
+@dataclass
+class LocalAgent:
+    """Represents a running local Claude Code agent."""
+    id: str
+    task_id: Optional[str]
+    task_number: Optional[int]
+    task_title: str
+    task_description: Optional[str]
+    repo_dir: str
+    work_dir: str
+    worktree_path: Optional[str]
+    branch: Optional[str]
+    branch_created: bool
+    status: str  # starting, running, paused, completed, failed, stopped
+    pid: Optional[int] = None
+    process: Optional[subprocess.Popen] = None
+    output_buffer: List[str] = field(default_factory=list)
+    output_listeners: List[asyncio.Queue] = field(default_factory=list)
+    created_at: datetime = field(default_factory=datetime.now)
+    last_activity: datetime = field(default_factory=datetime.now)
+    exit_code: Optional[int] = None
+    session_id: Optional[str] = None
+
+
+class LocalAgentManager:
+    """Manages local Claude Code agent instances."""
+
+    MAX_AGENTS = 10  # Maximum concurrent agents to prevent resource exhaustion
+    STALE_TIMEOUT = 3600  # Agents idle for 1 hour are considered stale
+
+    def __init__(self):
+        self._agents: Dict[str, LocalAgent] = {}
+        self._output_tasks: Dict[str, asyncio.Task] = {}
+
+    def cleanup_stale_agents(self) -> int:
+        """Remove agents that are completed, failed, or stale. Returns count removed."""
+        now = datetime.now()
+        stale_ids = []
+
+        for agent_id, agent in self._agents.items():
+            # Remove failed/stopped agents, but keep completed ones with session_id for resumption
+            if agent.status in ("failed", "stopped"):
+                stale_ids.append(agent_id)
+                continue
+            if agent.status == "completed" and not agent.session_id:
+                # Only clean up completed agents without session_id
+                stale_ids.append(agent_id)
+                continue
+
+            # Check if process is still running
+            if agent.process:
+                poll = agent.process.poll()
+                if poll is not None:
+                    # Process has exited - but keep if it has a session_id for resumption
+                    if not agent.session_id:
+                        stale_ids.append(agent_id)
+                    continue
+
+            # Check for stale agents (no activity for a while)
+            if agent.created_at:
+                try:
+                    if (now - agent.created_at).total_seconds() > self.STALE_TIMEOUT:
+                        print(f"[LocalAgent] Agent {agent_id} is stale (created {agent.created_at})")
+                        stale_ids.append(agent_id)
+                except Exception:
+                    pass
+
+        for agent_id in stale_ids:
+            print(f"[LocalAgent] Cleaning up agent {agent_id}")
+            self.kill(agent_id)
+
+        return len(stale_ids)
+
+    async def create(
+        self,
+        task_id: Optional[str] = None,
+        task_number: Optional[int] = None,
+        task_title: str = "",
+        task_description: Optional[str] = None,
+        working_dir: Optional[str] = None,
+        prompt: Optional[str] = None,
+        skip_branch: bool = False
+    ) -> dict:
+        """Create and start a new local Claude Code agent."""
+
+        # Clean up stale agents first
+        cleaned = self.cleanup_stale_agents()
+        if cleaned > 0:
+            print(f"[LocalAgent] Cleaned up {cleaned} stale agents")
+
+        # Check max agent limit
+        if len(self._agents) >= self.MAX_AGENTS:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Maximum number of agents ({self.MAX_AGENTS}) reached. Kill some agents first."
+            )
+
+        claude_path = shutil.which("claude")
+        if not claude_path:
+            raise HTTPException(
+                status_code=400,
+                detail="Claude Code CLI not found. Install with: npm install -g @anthropic-ai/claude-code"
+            )
+
+        agent_id = str(uuid.uuid4())[:8]
+        repo_dir = working_dir or get_default_working_dir()
+        work_dir = repo_dir
+        branch = None
+        branch_created = False
+        worktree_path = None
+
+        # Handle git worktree if in a git repo with task number (unless skip_branch is set)
+        print(f"[LocalAgent] Worktree check: task_number={task_number}, is_git={is_git_repo(repo_dir)}, skip_branch={skip_branch}")
+        if task_number and is_git_repo(repo_dir) and not skip_branch:
+            branch = generate_branch_name(task_number, task_title, agent_id)
+            print(f"[LocalAgent] Creating worktree for branch: {branch}")
+            result = create_worktree(repo_dir, branch, task_number, agent_id)
+            print(f"[LocalAgent] Worktree result: {result}")
+
+            if result["success"]:
+                worktree_path = result["worktree_path"]
+                work_dir = worktree_path
+                branch_created = result["branch_created"]
+            else:
+                branch = get_current_branch(repo_dir)
+        elif is_git_repo(repo_dir):
+            branch = get_current_branch(repo_dir)
+
+        # Build prompt
+        if prompt:
+            final_prompt = prompt
+            # If worktree was created, prepend info so agent knows it's already in a worktree
+            if worktree_path:
+                worktree_info = f"""## IMPORTANT: Worktree Already Created
+You are working in an isolated git worktree at: `{worktree_path}`
+Branch: `{branch}`
+
+Do NOT create another worktree - you are already isolated. Skip any worktree creation steps.
+
+---
+
+"""
+                final_prompt = worktree_info + final_prompt
+        else:
+            task_json = {
+                "task_uuid": task_id,
+                "task_number": task_number,
+                "title": task_title or "Untitled task",
+                "description": task_description or "",
+                "branch": branch,
+                "worktree_path": str(worktree_path) if worktree_path else None
+            }
+            final_prompt = f"""Please start working on this task:
+
+```json
+{json.dumps(task_json, indent=2)}
+```"""
+
+        agent = LocalAgent(
+            id=agent_id,
+            task_id=task_id,
+            task_number=task_number,
+            task_title=task_title,
+            task_description=task_description,
+            repo_dir=repo_dir,
+            work_dir=work_dir,
+            worktree_path=worktree_path,
+            branch=branch,
+            branch_created=branch_created,
+            status="starting"
+        )
+
+        self._agents[agent_id] = agent
+
+        try:
+            env = os.environ.copy()
+            env.pop("ANTHROPIC_API_KEY", None)  # Use user's subscription
+
+            # Use print mode with JSON output
+            cmd = [
+                "claude",
+                "-p", final_prompt,
+                "--output-format", "stream-json",
+                "--verbose",
+                "--dangerously-skip-permissions"
+            ]
+
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                cwd=work_dir,
+                env=env,
+                bufsize=1,
+                universal_newlines=False
+            )
+
+            agent.pid = process.pid
+            agent.process = process
+            agent.status = "running"
+
+            print(f"[LocalAgent] Started Claude, PID: {process.pid}")
+
+            self._output_tasks[agent_id] = asyncio.create_task(
+                self._read_json_output(agent)
+            )
+
+            return {
+                "id": agent_id,
+                "task_id": task_id,
+                "task_number": task_number,
+                "task_title": task_title,
+                "status": agent.status,
+                "type": "local",
+                "work_dir": work_dir,
+                "worktree_path": worktree_path,
+                "branch": branch,
+                "branch_created": branch_created,
+                "is_worktree": worktree_path is not None
+            }
+
+        except Exception as e:
+            agent.status = "failed"
+            raise HTTPException(status_code=500, detail=f"Failed to start Claude: {str(e)}")
+
+    async def _read_json_output(self, agent: LocalAgent) -> None:
+        """Read JSON output from subprocess and broadcast to listeners."""
+        loop = asyncio.get_event_loop()
+
+        def read_line():
+            try:
+                if agent.process and agent.process.stdout:
+                    line = agent.process.stdout.readline()
+                    return line
+                return b''
+            except Exception:
+                return b''
+
+        while agent.status == "running":
+            try:
+                line = await loop.run_in_executor(None, read_line)
+
+                if not line:
+                    break
+
+                text = line.decode('utf-8', errors='replace').strip()
+                if not text:
+                    continue
+
+                agent.last_activity = datetime.now()
+
+                try:
+                    parsed = json.loads(text)
+
+                    # Extract session_id from system init message
+                    if parsed.get("type") == "system" and parsed.get("subtype") == "init":
+                        session_id = parsed.get("session_id")
+                        if session_id:
+                            agent.session_id = session_id
+                            print(f"[LocalAgent] Got session_id: {session_id}")
+
+                    agent.output_buffer.append({"data": text, "parsed": parsed})
+                    if len(agent.output_buffer) > 1000:
+                        agent.output_buffer.pop(0)
+
+                    for queue in agent.output_listeners:
+                        try:
+                            await queue.put({
+                                "type": "output",
+                                "data": text,
+                                "raw": text
+                            })
+                        except Exception:
+                            pass
+
+                except json.JSONDecodeError:
+                    for queue in agent.output_listeners:
+                        try:
+                            await queue.put({
+                                "type": "output",
+                                "data": text
+                            })
+                        except Exception:
+                            pass
+
+            except Exception as e:
+                print(f"[LocalAgent] Read error: {e}")
+                break
+
+        if agent.process:
+            agent.exit_code = agent.process.wait()
+
+        if agent.session_id:
+            agent.status = "paused"
+            print(f"[LocalAgent] Agent {agent.id} paused, session can be resumed")
+
+            for queue in agent.output_listeners:
+                try:
+                    await queue.put({
+                        "type": "paused",
+                        "exit_code": agent.exit_code,
+                        "session_id": agent.session_id,
+                        "can_resume": True
+                    })
+                except Exception:
+                    pass
+        else:
+            agent.status = "completed" if agent.exit_code == 0 else "failed"
+
+            for queue in agent.output_listeners:
+                try:
+                    await queue.put({
+                        "type": "exit",
+                        "exit_code": agent.exit_code
+                    })
+                except Exception:
+                    pass
+
+    async def _run_with_resume(self, agent: LocalAgent, message: str, image_paths: List[str] = None) -> None:
+        """Run a follow-up message using session resume.
+
+        Args:
+            agent: The agent to resume
+            message: The follow-up message
+            image_paths: Optional list of image file paths (already included in message text)
+        """
+        if not agent.session_id:
+            return
+
+        env = os.environ.copy()
+        env.pop("ANTHROPIC_API_KEY", None)
+
+        # Image paths are already included in the message text as [Image: /path/to/file]
+        # Claude will use the Read tool to view them
+        if image_paths:
+            print(f"[LocalAgent] Message includes {len(image_paths)} image paths for Claude to read")
+
+        cmd = [
+            "claude",
+            "-p", message,
+            "--output-format", "stream-json",
+            "--verbose",
+            "--resume", agent.session_id,
+            "--dangerously-skip-permissions"
+        ]
+
+        print(f"[LocalAgent] Resuming session {agent.session_id}")
+
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            cwd=agent.work_dir,
+            env=env,
+            bufsize=1,
+            universal_newlines=False
+        )
+
+        agent.process = process
+        agent.pid = process.pid
+        agent.status = "running"
+
+        await self._read_json_output(agent)
+
+    def get(self, agent_id: str) -> Optional[dict]:
+        """Get agent info by ID."""
+        agent = self._agents.get(agent_id)
+        if not agent:
+            return None
+
+        return {
+            "id": agent.id,
+            "task_id": agent.task_id,
+            "task_number": agent.task_number,
+            "task_title": agent.task_title,
+            "status": agent.status,
+            "type": "local",
+            "work_dir": agent.work_dir,
+            "worktree_path": agent.worktree_path,
+            "branch": agent.branch,
+            "branch_created": agent.branch_created,
+            "is_worktree": agent.worktree_path is not None,
+            "created_at": agent.created_at.isoformat(),
+            "last_activity": agent.last_activity.isoformat(),
+            "exit_code": agent.exit_code,
+            "session_id": agent.session_id,
+            "can_resume": agent.session_id is not None
+        }
+
+    def list(self) -> List[dict]:
+        """List all agents."""
+        return [
+            {
+                "id": a.id,
+                "task_id": a.task_id,
+                "task_number": a.task_number,
+                "task_title": a.task_title,
+                "status": a.status,
+                "type": "local",
+                "branch": a.branch,
+                "worktree_path": a.worktree_path,
+                "created_at": a.created_at.isoformat(),
+                "last_activity": a.last_activity.isoformat(),
+                "session_id": a.session_id,
+                "can_resume": a.session_id is not None
+            }
+            for a in self._agents.values()
+        ]
+
+    async def resume_session(self, agent_id: str, message: str, image_paths: List[str] = None) -> bool:
+        """Resume an agent session with a follow-up message.
+
+        Args:
+            agent_id: The agent to resume
+            message: The follow-up message (may already contain image references)
+            image_paths: Optional list of image file paths to include
+        """
+        agent = self._agents.get(agent_id)
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+
+        if not agent.session_id:
+            raise HTTPException(
+                status_code=400,
+                detail="No session ID available. Cannot resume session."
+            )
+
+        if agent.status == "running":
+            raise HTTPException(
+                status_code=400,
+                detail="Agent is already running. Wait for it to complete."
+            )
+
+        if image_paths:
+            print(f"[LocalAgent] Resuming with {len(image_paths)} images: {image_paths}")
+
+        try:
+            if agent_id in self._output_tasks:
+                self._output_tasks[agent_id].cancel()
+
+            self._output_tasks[agent_id] = asyncio.create_task(
+                self._run_with_resume(agent, message, image_paths)
+            )
+
+            return True
+
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to resume session: {str(e)}")
+
+    def kill(self, agent_id: str, cleanup_worktree: bool = False) -> None:
+        """Kill an agent and optionally cleanup worktree."""
+        agent = self._agents.get(agent_id)
+        if not agent:
+            return
+
+        print(f"[LocalAgent] Killing agent {agent_id}")
+
+        # Cancel output reading task first
+        if agent_id in self._output_tasks:
+            self._output_tasks[agent_id].cancel()
+            del self._output_tasks[agent_id]
+
+        # Close stdout pipe to release file descriptor
+        if agent.process and agent.process.stdout:
+            try:
+                agent.process.stdout.close()
+            except Exception:
+                pass
+
+        # Terminate the process
+        if agent.process:
+            try:
+                agent.process.terminate()
+                try:
+                    agent.process.wait(timeout=2)
+                except Exception:
+                    agent.process.kill()
+                    agent.process.wait(timeout=1)
+            except Exception:
+                pass
+        elif agent.pid:
+            try:
+                os.kill(agent.pid, signal.SIGTERM)
+                try:
+                    os.waitpid(agent.pid, os.WNOHANG)
+                except Exception:
+                    pass
+            except ProcessLookupError:
+                pass
+            except Exception:
+                try:
+                    os.kill(agent.pid, signal.SIGKILL)
+                except Exception:
+                    pass
+
+        agent.status = "stopped"
+
+        if cleanup_worktree and agent.worktree_path and agent.repo_dir:
+            remove_worktree(agent.repo_dir, agent.worktree_path)
+
+        del self._agents[agent_id]
+        print(f"[LocalAgent] Agent {agent_id} killed, {len(self._agents)} agents remaining")
+
+    def add_listener(self, agent_id: str) -> asyncio.Queue:
+        """Add an output listener for streaming."""
+        agent = self._agents.get(agent_id)
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+
+        queue = asyncio.Queue()
+
+        for item in agent.output_buffer:
+            if isinstance(item, dict):
+                queue.put_nowait({"type": "output", **item})
+            else:
+                queue.put_nowait({"type": "output", "data": item})
+
+        agent.output_listeners.append(queue)
+        return queue
+
+    def remove_listener(self, agent_id: str, queue: asyncio.Queue) -> None:
+        """Remove an output listener."""
+        agent = self._agents.get(agent_id)
+        if agent and queue in agent.output_listeners:
+            agent.output_listeners.remove(queue)
+
+    def get_output(self, agent_id: str) -> str:
+        """Get full output buffer."""
+        agent = self._agents.get(agent_id)
+        if not agent:
+            return ""
+        parts = []
+        for item in agent.output_buffer:
+            if isinstance(item, dict):
+                parts.append(item.get("data", ""))
+            else:
+                parts.append(item)
+        return "".join(parts)
+
+
+# Singleton instance
+agent_manager = LocalAgentManager()
