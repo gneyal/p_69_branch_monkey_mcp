@@ -1,0 +1,158 @@
+"""
+Machine (automated business process) management tools.
+"""
+
+from .. import state
+from ..api_client import api_get, api_post, api_put, api_delete
+from ..mcp_app import mcp
+
+
+@mcp.tool()
+def monkey_machine_list() -> str:
+    """List all machines for the current project.
+
+    Requires a project to be focused first using monkey_project_focus.
+    """
+    if not state.CURRENT_PROJECT_ID:
+        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first.\n\nUse `monkey_project_list` to see available projects."
+
+    try:
+        endpoint = f"/api/machines?project_id={state.CURRENT_PROJECT_ID}"
+        result = api_get(endpoint)
+        machines = result.get("machines", [])
+
+        if not machines:
+            return f"No machines found for project **{state.CURRENT_PROJECT_NAME}**."
+
+        output = f"# Machines (Project: {state.CURRENT_PROJECT_NAME})\n\n"
+        for m in machines:
+            status_icon = {"active": "🟢", "paused": "⏸️", "draft": "📝"}.get(m.get("status"), "⚪")
+            output += f"{status_icon} **{m.get('name')}** (ID: `{m.get('id')}`)\n"
+            if m.get("description"):
+                output += f"   {m.get('description')[:80]}...\n"
+
+        return output
+    except Exception as e:
+        return f"Error fetching machines: {str(e)}"
+
+
+@mcp.tool()
+def monkey_machine_create(
+    name: str,
+    description: str = "",
+    goal: str = "",
+    status: str = "active"
+) -> str:
+    """Create a new machine (automated business process) in the current project.
+
+    Requires a project to be focused first using monkey_project_focus.
+    """
+    if not state.CURRENT_PROJECT_ID:
+        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
+
+    try:
+        result = api_post("/api/machines", {
+            "name": name,
+            "description": description,
+            "goal": goal,
+            "status": status,
+            "project_id": state.CURRENT_PROJECT_ID
+        })
+        machine = result.get("machine", result)
+        return f"✅ Created machine: {name} (ID: {machine.get('id')}) in project {state.CURRENT_PROJECT_NAME}"
+    except Exception as e:
+        return f"Error creating machine: {str(e)}"
+
+
+@mcp.tool()
+def monkey_machine_get(machine_id: str) -> str:
+    """Get a specific machine by ID.
+
+    Args:
+        machine_id: The UUID of the machine to retrieve
+    """
+    if not state.CURRENT_PROJECT_ID:
+        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
+
+    try:
+        result = api_get(f"/api/machines/{machine_id}")
+        machine = result.get("machine", result)
+
+        output = f"# Machine: {machine.get('name')}\n\n"
+        output += f"**ID:** `{machine.get('id')}`\n"
+        output += f"**Status:** {machine.get('status', 'unknown')}\n"
+        if machine.get('description'):
+            output += f"**Description:** {machine.get('description')}\n"
+        if machine.get('goal'):
+            output += f"**Goal:** {machine.get('goal')}\n"
+        output += f"**Position:** ({machine.get('position_x', 0)}, {machine.get('position_y', 0)})\n"
+
+        return output
+    except Exception as e:
+        return f"Error fetching machine: {str(e)}"
+
+
+@mcp.tool()
+def monkey_machine_update(
+    machine_id: str,
+    name: str = None,
+    description: str = None,
+    goal: str = None,
+    status: str = None,
+    position_x: float = None,
+    position_y: float = None
+) -> str:
+    """Update an existing machine.
+
+    Args:
+        machine_id: The UUID of the machine to update
+        name: New name (optional)
+        description: New description (optional)
+        goal: New goal (optional)
+        status: New status - active, paused, or draft (optional)
+        position_x: New X position (optional)
+        position_y: New Y position (optional)
+    """
+    if not state.CURRENT_PROJECT_ID:
+        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
+
+    try:
+        updates = {}
+        if name is not None:
+            updates["name"] = name
+        if description is not None:
+            updates["description"] = description
+        if goal is not None:
+            updates["goal"] = goal
+        if status is not None:
+            updates["status"] = status
+        if position_x is not None:
+            updates["position_x"] = position_x
+        if position_y is not None:
+            updates["position_y"] = position_y
+
+        if not updates:
+            return "⚠️ No updates provided. Specify at least one field to update."
+
+        result = api_put(f"/api/machines/{machine_id}", updates)
+        machine = result.get("machine", result)
+        return f"✅ Updated machine: {machine.get('name')} (ID: {machine_id})"
+    except Exception as e:
+        return f"Error updating machine: {str(e)}"
+
+
+@mcp.tool()
+def monkey_machine_delete(machine_id: str) -> str:
+    """Delete a machine by ID.
+
+    Args:
+        machine_id: The UUID of the machine to delete
+    """
+    if not state.CURRENT_PROJECT_ID:
+        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
+
+    try:
+        api_delete(f"/api/machines/{machine_id}")
+        return f"✅ Deleted machine (ID: {machine_id})"
+    except Exception as e:
+        return f"Error deleting machine: {str(e)}"
