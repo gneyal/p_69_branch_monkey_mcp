@@ -34,7 +34,7 @@ dependencies = [
 ]
 
 [project.scripts]
-branch-monkey-mcp = "branch_monkey_mcp.server:main"
+branch-monkey-mcp = "branch_monkey_mcp.kompany_mcp:main"
 branch-monkey-relay = "branch_monkey_mcp.relay_client:main"
 branch-monkey-proxy = "branch_monkey_mcp.dev_proxy:main"
 
