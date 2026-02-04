@@ -19,11 +19,13 @@ from pydantic import BaseModel
 
 from ..config import get_default_working_dir
 from ..git_utils import get_git_root
+from ..dev_server import start_ngrok_tunnel, stop_ngrok_tunnel
 
 router = APIRouter()
 
 # Track time machine previews
 _time_machine_previews: Dict[str, dict] = {}
+_time_machine_tunnels: Dict[str, object] = {}  # Track ngrok tunnels for time machine
 TIME_MACHINE_BASE_PORT = 6100
 
 # Track agent definitions
@@ -147,6 +149,7 @@ _init_default_agent_definitions()
 
 class TimeMachinePreviewRequest(BaseModel):
     commit_sha: str
+    tunnel: Optional[bool] = False  # Request ngrok tunnel for remote access
 
 
 @router.post("/time-machine/preview")
@@ -158,10 +161,19 @@ async def create_time_machine_preview(request: TimeMachinePreviewRequest):
     # Check if already running
     if short_sha in _time_machine_previews:
         info = _time_machine_previews[short_sha]
+        tunnel_url = info.get("tunnel_url")
+
+        # Create tunnel if requested and not already created
+        if request.tunnel and not tunnel_url:
+            tunnel_url = start_ngrok_tunnel(info["port"], f"timemachine-{short_sha}")
+            if tunnel_url:
+                info["tunnel_url"] = tunnel_url
+
         return {
             "status": "already_running",
             "port": info["port"],
             "url": f"http://localhost:{info['port']}",
+            "tunnelUrl": tunnel_url,
             "worktree_path": info["worktree_path"]
         }
 
@@ -241,16 +253,25 @@ async def create_time_machine_preview(request: TimeMachinePreviewRequest):
             "port": port,
             "worktree_path": str(worktree_path),
             "commit_sha": commit_sha,
-            "started_at": datetime.now().isoformat()
+            "started_at": datetime.now().isoformat(),
+            "tunnel_url": None
         }
 
         # Wait for server to start
         await asyncio.sleep(3)
 
+        # Create ngrok tunnel if requested
+        tunnel_url = None
+        if request.tunnel:
+            tunnel_url = start_ngrok_tunnel(port, f"timemachine-{short_sha}")
+            if tunnel_url:
+                _time_machine_previews[short_sha]["tunnel_url"] = tunnel_url
+
         return {
             "status": "started",
             "port": port,
             "url": f"http://localhost:{port}",
+            "tunnelUrl": tunnel_url,
             "worktree_path": str(worktree_path),
             "commit_sha": commit_sha
         }
@@ -269,6 +290,9 @@ def delete_time_machine_preview(sha: str):
         raise HTTPException(status_code=404, detail="Preview not found")
 
     info = _time_machine_previews[short_sha]
+
+    # Stop ngrok tunnel if exists
+    stop_ngrok_tunnel(f"timemachine-{short_sha}")
 
     # Stop dev server
     try:
