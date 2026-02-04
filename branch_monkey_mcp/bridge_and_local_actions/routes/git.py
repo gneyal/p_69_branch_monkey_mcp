@@ -313,19 +313,22 @@ def get_branch_graph(limit: int = 50):
 
 
 @router.post("/local-claude/checkout/{sha}")
-def checkout_commit(sha: str):
+def checkout_commit(sha: str, auto_stash: bool = True):
     """Checkout to a specific commit.
 
     This will checkout the working directory to the specified commit.
-    Warning: This will detach HEAD if checking out a commit that's not a branch tip.
+    If auto_stash is True (default), uncommitted changes will be automatically
+    stashed before checkout and can be restored later.
     """
     work_dir = get_default_working_dir()
     git_root = get_git_root(work_dir)
     if not git_root:
         raise HTTPException(status_code=400, detail="Not in a git repository")
 
+    stashed = False
+
     try:
-        # First check if there are uncommitted changes
+        # Check if there are uncommitted changes
         status_result = subprocess.run(
             ["git", "status", "--porcelain"],
             cwd=git_root,
@@ -333,11 +336,29 @@ def checkout_commit(sha: str):
             text=True
         )
 
-        if status_result.stdout.strip():
-            raise HTTPException(
-                status_code=400,
-                detail="Cannot checkout: you have uncommitted changes. Please commit or stash them first."
-            )
+        has_changes = bool(status_result.stdout.strip())
+
+        if has_changes:
+            if auto_stash:
+                # Auto-stash changes with a descriptive message
+                stash_result = subprocess.run(
+                    ["git", "stash", "push", "-m", f"Auto-stash before checkout to {sha[:7]}"],
+                    cwd=git_root,
+                    capture_output=True,
+                    text=True
+                )
+                if stash_result.returncode == 0:
+                    stashed = True
+                else:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Failed to stash changes: {stash_result.stderr}"
+                    )
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Cannot checkout: you have uncommitted changes. Please commit or stash them first."
+                )
 
         # Checkout to the commit
         result = subprocess.run(
@@ -348,6 +369,9 @@ def checkout_commit(sha: str):
         )
 
         if result.returncode != 0:
+            # If checkout failed and we stashed, restore the stash
+            if stashed:
+                subprocess.run(["git", "stash", "pop"], cwd=git_root, capture_output=True)
             raise HTTPException(status_code=400, detail=f"Checkout failed: {result.stderr}")
 
         # Get current branch/commit info after checkout
@@ -359,14 +383,102 @@ def checkout_commit(sha: str):
         )
         current_ref = branch_result.stdout.strip()
 
+        message = f"Restored to version {sha[:7]}"
+        if stashed:
+            message += " (your work-in-progress was saved)"
+
         return {
             "success": True,
             "sha": sha,
             "current_ref": current_ref,
             "detached": current_ref == "HEAD",
-            "message": f"Checked out to {sha[:7]}"
+            "stashed": stashed,
+            "message": message
         }
     except HTTPException:
         raise
+    except Exception as e:
+        # If something failed and we stashed, try to restore
+        if stashed:
+            subprocess.run(["git", "stash", "pop"], cwd=git_root, capture_output=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/local-claude/stash/pop")
+def pop_stash():
+    """Restore the most recent stashed changes.
+
+    Use this to get back work-in-progress after restoring a version.
+    """
+    work_dir = get_default_working_dir()
+    git_root = get_git_root(work_dir)
+    if not git_root:
+        raise HTTPException(status_code=400, detail="Not in a git repository")
+
+    try:
+        # Check if there's anything in the stash
+        list_result = subprocess.run(
+            ["git", "stash", "list"],
+            cwd=git_root,
+            capture_output=True,
+            text=True
+        )
+
+        if not list_result.stdout.strip():
+            return {"success": True, "message": "No saved work to restore"}
+
+        # Pop the stash
+        result = subprocess.run(
+            ["git", "stash", "pop"],
+            cwd=git_root,
+            capture_output=True,
+            text=True
+        )
+
+        if result.returncode != 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Failed to restore work: {result.stderr}"
+            )
+
+        return {
+            "success": True,
+            "message": "Your work-in-progress has been restored"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/local-claude/stash/list")
+def list_stash():
+    """List all stashed changes."""
+    work_dir = get_default_working_dir()
+    git_root = get_git_root(work_dir)
+    if not git_root:
+        raise HTTPException(status_code=400, detail="Not in a git repository")
+
+    try:
+        result = subprocess.run(
+            ["git", "stash", "list", "--pretty=format:%gd|%s|%ar"],
+            cwd=git_root,
+            capture_output=True,
+            text=True
+        )
+
+        stashes = []
+        for line in result.stdout.strip().split('\n'):
+            if not line:
+                continue
+            parts = line.split('|', 2)
+            if len(parts) >= 3:
+                stashes.append({
+                    "ref": parts[0],
+                    "message": parts[1],
+                    "relative_date": parts[2]
+                })
+
+        return {"stashes": stashes, "count": len(stashes)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
