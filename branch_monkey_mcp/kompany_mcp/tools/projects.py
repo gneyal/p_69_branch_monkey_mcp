@@ -3,7 +3,7 @@ Project management tools.
 """
 
 from .. import state
-from ..api_client import api_get
+from ..api_client import api_get, api_post
 from ..mcp_app import mcp
 
 
@@ -94,3 +94,164 @@ def monkey_org_list() -> str:
         return output
     except Exception as e:
         return f"Error fetching organizations: {str(e)}"
+
+
+@mcp.tool()
+def monkey_project_create_folder(
+    base_path: str,
+    project_name: str,
+    machine_id: str,
+    init_git: bool = True
+) -> str:
+    """Create a new project folder on a local machine with auto-numbering.
+
+    This creates a folder named p_{next_number}_{project_name} in the base_path.
+    The next number is auto-incremented based on existing p_X_* folders.
+
+    Args:
+        base_path: The base directory to create the project in (e.g., ~/Code)
+        project_name: The project name (will be sanitized for folder name)
+        machine_id: The machine ID of the connected relay node
+        init_git: Whether to initialize a git repository (default: True)
+
+    Returns:
+        Information about the created folder including path and project number.
+
+    Example:
+        monkey_project_create_folder("~/Code", "my-saas-app", "machine-abc123")
+        → Creates ~/Code/p_84_my-saas-app/ with git initialized
+    """
+    try:
+        # Call the relay endpoint which forwards to the local server
+        result = api_post(
+            f"/api/relay/{machine_id}/local-claude/projects/create-project-folder",
+            {
+                "base_path": base_path,
+                "project_name": project_name,
+                "init_git": init_git
+            }
+        )
+
+        path = result.get("path", "unknown")
+        folder_name = result.get("folder_name", "unknown")
+        number = result.get("number", "?")
+        git_initialized = result.get("git_initialized", False)
+
+        output = f"""# Project Folder Created
+
+**Folder:** `{folder_name}`
+**Full Path:** `{path}`
+**Project Number:** {number}
+**Git Initialized:** {"Yes" if git_initialized else "No"}
+
+The folder is ready for your project files."""
+
+        return output
+
+    except Exception as e:
+        return f"Error creating project folder: {str(e)}"
+
+
+@mcp.tool()
+def monkey_project_scan(path: str, machine_id: str) -> str:
+    """Scan a folder for project configuration on a local machine.
+
+    Detects git remote, framework, deployment platform, and dev server settings
+    from configuration files in the folder.
+
+    Args:
+        path: The folder path to scan
+        machine_id: The machine ID of the connected relay node
+
+    Returns:
+        Detected configuration including git remote, framework, deployment platform,
+        and dev server settings.
+    """
+    try:
+        result = api_post(
+            f"/api/relay/{machine_id}/local-claude/projects/scan-project",
+            {"path": path}
+        )
+
+        git_remote = result.get("git_remote")
+        framework = result.get("framework")
+        deployment_platform = result.get("deployment_platform")
+        dev_server = result.get("dev_server")
+
+        output = "# Project Configuration Detected\n\n"
+
+        if git_remote:
+            output += f"**Git Remote:** `{git_remote}`\n"
+        else:
+            output += "**Git Remote:** Not detected\n"
+
+        if framework:
+            output += f"**Framework:** {framework}\n"
+        else:
+            output += "**Framework:** Not detected\n"
+
+        if deployment_platform:
+            output += f"**Deployment Platform:** {deployment_platform}\n"
+        else:
+            output += "**Deployment Platform:** Not detected\n"
+
+        if dev_server:
+            command = dev_server.get("command", "unknown")
+            port = dev_server.get("port", "unknown")
+            output += f"**Dev Server:** `npm run {command}` on port {port}\n"
+        else:
+            output += "**Dev Server:** Not detected\n"
+
+        return output
+
+    except Exception as e:
+        return f"Error scanning project: {str(e)}"
+
+
+@mcp.tool()
+def monkey_project_list_folders(path: str, machine_id: str) -> str:
+    """List folders in a directory on a local machine.
+
+    Useful for browsing the file system to find project folders.
+
+    Args:
+        path: The directory path to list
+        machine_id: The machine ID of the connected relay node
+
+    Returns:
+        List of folders with their names, paths, and whether they are projects or git repos.
+    """
+    try:
+        result = api_post(
+            f"/api/relay/{machine_id}/local-claude/projects/list-folders",
+            {"path": path}
+        )
+
+        current_path = result.get("path", path)
+        parent = result.get("parent", "")
+        folders = result.get("folders", [])
+
+        output = f"# Folders in `{current_path}`\n\n"
+        output += f"**Parent:** `{parent}`\n\n"
+
+        if not folders:
+            output += "_No folders found_\n"
+        else:
+            for folder in folders:
+                name = folder.get("name", "")
+                is_project = folder.get("is_project", False)
+                is_git = folder.get("is_git_repo", False)
+
+                icons = []
+                if is_project:
+                    icons.append("P")
+                if is_git:
+                    icons.append("git")
+
+                icon_str = f" [{', '.join(icons)}]" if icons else ""
+                output += f"- `{name}`{icon_str}\n"
+
+        return output
+
+    except Exception as e:
+        return f"Error listing folders: {str(e)}"

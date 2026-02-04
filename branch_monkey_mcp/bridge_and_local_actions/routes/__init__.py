@@ -16,6 +16,7 @@ from .proxy import router as proxy_router
 from .merge import router as merge_router
 from .config_routes import router as config_router
 from .advanced import router as advanced_router
+from .projects import router as projects_router
 
 # Create main router that includes all sub-routers
 main_router = APIRouter()
@@ -31,3 +32,4 @@ main_router.include_router(proxy_router, prefix="/api/local-claude", tags=["prox
 main_router.include_router(merge_router, prefix="/api/local-claude", tags=["merge"])
 main_router.include_router(config_router, prefix="/api", tags=["config"])
 main_router.include_router(advanced_router, prefix="/api/local-claude", tags=["advanced"])
+main_router.include_router(projects_router, prefix="/api/local-claude/projects", tags=["projects"])
