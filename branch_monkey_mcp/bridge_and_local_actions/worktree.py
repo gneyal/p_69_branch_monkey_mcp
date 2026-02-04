@@ -124,13 +124,18 @@ def remove_worktree(repo_dir: str, worktree_path: str) -> None:
         shutil.rmtree(worktree_path, ignore_errors=True)
 
 
-def find_worktree_path(task_number: int) -> Optional[str]:
+def find_worktree_path(task_number: int, project_path: Optional[str] = None) -> Optional[str]:
     """Find the worktree path for a task number.
 
     Uses trailing dash in prefix matching to avoid false matches
     (e.g., task-29 should not match task-290).
+
+    Args:
+        task_number: The task number to find
+        project_path: Optional explicit project path to search in
     """
-    work_dir = get_default_working_dir()
+    # Use project_path if provided, otherwise fall back to default working dir
+    work_dir = project_path or get_default_working_dir()
     git_root = get_git_root(work_dir)
     if not git_root:
         return None

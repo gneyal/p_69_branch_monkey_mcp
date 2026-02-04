@@ -52,6 +52,7 @@ class DevServerRequest(BaseModel):
     dev_script: Optional[str] = None  # Custom script, e.g. "cd frontend && npm run dev --port {port}"
     tunnel: Optional[bool] = False  # Create ngrok tunnel for remote access
     worktree_path: Optional[str] = None  # Explicit worktree path (for cross-repo scenarios)
+    project_path: Optional[str] = None  # Project's local path (to find worktree in correct repo)
 
 
 def start_ngrok_tunnel(port: int, run_id: str) -> Optional[str]:
@@ -107,7 +108,8 @@ async def start_dev_server_process(
     task_id: Optional[str] = None,
     dev_script: Optional[str] = None,
     tunnel: bool = False,
-    worktree_path: Optional[str] = None
+    worktree_path: Optional[str] = None,
+    project_path: Optional[str] = None
 ) -> dict:
     """Start a dev server for a worktree.
 
@@ -151,16 +153,19 @@ async def start_dev_server_process(
             delete_dev_server_from_db(run_id)
             del _running_dev_servers[run_id]
 
-    # Find worktree - use provided path if available, otherwise search locally
+    # Find worktree - use provided path if available, otherwise search in project
     if worktree_path:
         # Validate the provided path exists
         if not Path(worktree_path).exists():
             raise HTTPException(status_code=404, detail=f"Provided worktree path does not exist: {worktree_path}")
         print(f"[DevServer] Using provided worktree path: {worktree_path}")
     else:
-        worktree_path = find_worktree_path(task_number)
+        worktree_path = find_worktree_path(task_number, project_path)
         if not worktree_path:
-            raise HTTPException(status_code=404, detail=f"No worktree found for task {task_number}")
+            detail = f"No worktree found for task {task_number}"
+            if project_path:
+                detail += f" in {project_path}"
+            raise HTTPException(status_code=404, detail=detail)
 
     # Find available port
     port = find_available_port(BASE_DEV_PORT + task_number)
