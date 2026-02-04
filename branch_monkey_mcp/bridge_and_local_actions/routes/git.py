@@ -156,3 +156,63 @@ def get_commit_diff(sha: str):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/local-claude/checkout/{sha}")
+def checkout_commit(sha: str):
+    """Checkout to a specific commit.
+
+    This will checkout the working directory to the specified commit.
+    Warning: This will detach HEAD if checking out a commit that's not a branch tip.
+    """
+    work_dir = get_default_working_dir()
+    git_root = get_git_root(work_dir)
+    if not git_root:
+        raise HTTPException(status_code=400, detail="Not in a git repository")
+
+    try:
+        # First check if there are uncommitted changes
+        status_result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=git_root,
+            capture_output=True,
+            text=True
+        )
+
+        if status_result.stdout.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot checkout: you have uncommitted changes. Please commit or stash them first."
+            )
+
+        # Checkout to the commit
+        result = subprocess.run(
+            ["git", "checkout", sha],
+            cwd=git_root,
+            capture_output=True,
+            text=True
+        )
+
+        if result.returncode != 0:
+            raise HTTPException(status_code=400, detail=f"Checkout failed: {result.stderr}")
+
+        # Get current branch/commit info after checkout
+        branch_result = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=git_root,
+            capture_output=True,
+            text=True
+        )
+        current_ref = branch_result.stdout.strip()
+
+        return {
+            "success": True,
+            "sha": sha,
+            "current_ref": current_ref,
+            "detached": current_ref == "HEAD",
+            "message": f"Checked out to {sha[:7]}"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
