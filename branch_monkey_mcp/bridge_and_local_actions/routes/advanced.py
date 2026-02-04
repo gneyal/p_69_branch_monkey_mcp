@@ -150,6 +150,7 @@ _init_default_agent_definitions()
 class TimeMachinePreviewRequest(BaseModel):
     commit_sha: str
     tunnel: Optional[bool] = False  # Request ngrok tunnel for remote access
+    dev_script: Optional[str] = None  # Custom dev script (e.g., "npx serve -l {port}")
 
 
 @router.post("/time-machine/preview")
@@ -213,39 +214,58 @@ async def create_time_machine_preview(request: TimeMachinePreviewRequest):
         if create_result.returncode != 0:
             raise HTTPException(status_code=500, detail=f"Failed to create worktree: {create_result.stderr}")
 
-        # Check for frontend directory
-        frontend_path = worktree_path / "frontend"
-        if not frontend_path.exists():
-            # Cleanup and error
-            subprocess.run(["git", "worktree", "remove", "--force", str(worktree_path)], cwd=git_root, capture_output=True)
-            raise HTTPException(status_code=404, detail="No frontend directory in this commit")
-
-        # Install dependencies if needed
-        node_modules = frontend_path / "node_modules"
-        if not node_modules.exists():
-            print(f"[TimeMachine] Installing dependencies for {short_sha}...")
-            install_result = subprocess.run(
-                ["npm", "install"],
-                cwd=str(frontend_path),
-                capture_output=True,
-                timeout=180
-            )
-            if install_result.returncode != 0:
-                subprocess.run(["git", "worktree", "remove", "--force", str(worktree_path)], cwd=git_root, capture_output=True)
-                raise HTTPException(status_code=500, detail="npm install failed")
-
         # Find available port
         port = TIME_MACHINE_BASE_PORT + len(_time_machine_previews)
 
-        # Start dev server
-        print(f"[TimeMachine] Starting dev server for {short_sha} on port {port}...")
-        process = subprocess.Popen(
-            ["npm", "run", "dev", "--", "--port", str(port)],
-            cwd=str(frontend_path),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True
-        )
+        # Determine working directory and command
+        if request.dev_script:
+            # Custom dev script provided - run from worktree root
+            work_path = worktree_path
+            command = request.dev_script.replace("{port}", str(port))
+            print(f"[TimeMachine] Running custom script for {short_sha}: {command}")
+            process = subprocess.Popen(
+                command,
+                shell=True,
+                cwd=str(work_path),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True
+            )
+        else:
+            # Default: look for frontend directory or use root
+            frontend_path = worktree_path / "frontend"
+            if frontend_path.exists():
+                work_path = frontend_path
+            elif (worktree_path / "package.json").exists():
+                work_path = worktree_path
+            else:
+                # Cleanup and error
+                subprocess.run(["git", "worktree", "remove", "--force", str(worktree_path)], cwd=git_root, capture_output=True)
+                raise HTTPException(status_code=404, detail="No frontend directory or package.json found. Configure a custom dev_script.")
+
+            # Install dependencies if needed
+            node_modules = work_path / "node_modules"
+            if not node_modules.exists():
+                print(f"[TimeMachine] Installing dependencies for {short_sha}...")
+                install_result = subprocess.run(
+                    ["npm", "install"],
+                    cwd=str(work_path),
+                    capture_output=True,
+                    timeout=180
+                )
+                if install_result.returncode != 0:
+                    subprocess.run(["git", "worktree", "remove", "--force", str(worktree_path)], cwd=git_root, capture_output=True)
+                    raise HTTPException(status_code=500, detail="npm install failed")
+
+            # Start dev server
+            print(f"[TimeMachine] Starting dev server for {short_sha} on port {port}...")
+            process = subprocess.Popen(
+                ["npm", "run", "dev", "--", "--port", str(port)],
+                cwd=str(work_path),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True
+            )
 
         # Track it
         _time_machine_previews[short_sha] = {
