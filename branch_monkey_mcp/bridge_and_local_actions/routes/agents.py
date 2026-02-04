@@ -295,3 +295,39 @@ def check_claude_installed():
         "installed": claude_path is not None,
         "path": claude_path
     }
+
+
+@router.get("/stats")
+def get_machine_stats():
+    """
+    Get combined machine stats in a single request.
+    Returns agents, worktrees count, and working directory info.
+    This avoids multiple relay round-trips.
+    """
+    from .worktrees import list_worktrees
+    from .config_routes import get_working_directory
+
+    # Get agents (fast - in memory)
+    agents = agent_manager.list()
+
+    # Get worktrees (may be slower due to git commands)
+    try:
+        wt_result = list_worktrees()
+        worktrees = wt_result.get("worktrees", [])
+    except Exception as e:
+        print(f"[Stats] Failed to get worktrees: {e}")
+        worktrees = []
+
+    # Get working directory config
+    try:
+        config = get_working_directory()
+        home_dir = config.get("home_directory")
+    except Exception as e:
+        print(f"[Stats] Failed to get working dir: {e}")
+        home_dir = None
+
+    return {
+        "agents": agents,
+        "worktrees": worktrees,
+        "home_directory": home_dir
+    }
