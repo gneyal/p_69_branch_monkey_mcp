@@ -15,6 +15,7 @@ from . import notes
 from . import domains
 from . import contexts
 from . import agents
+from . import deployments
 
 __all__ = [
     "status",
@@ -27,4 +28,5 @@ __all__ = [
     "domains",
     "contexts",
     "agents",
+    "deployments",
 ]
