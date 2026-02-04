@@ -41,32 +41,6 @@ def expand_path(path: str) -> str:
     return os.path.expanduser(os.path.expandvars(path))
 
 
-def get_next_project_number(base_path: str) -> int:
-    """
-    Scan base_path for existing p_X_* folders and return next available number.
-    """
-    expanded_path = expand_path(base_path)
-
-    if not os.path.isdir(expanded_path):
-        return 1
-
-    pattern = re.compile(r'^p_(\d+)_')
-    max_number = 0
-
-    try:
-        for entry in os.listdir(expanded_path):
-            if os.path.isdir(os.path.join(expanded_path, entry)):
-                match = pattern.match(entry)
-                if match:
-                    number = int(match.group(1))
-                    if number > max_number:
-                        max_number = number
-    except Exception:
-        pass
-
-    return max_number + 1
-
-
 def sanitize_project_name(name: str) -> str:
     """
     Sanitize project name for folder creation.
@@ -88,16 +62,12 @@ def sanitize_project_name(name: str) -> str:
 @router.post("/create-project-folder")
 def create_project_folder(request: CreateProjectFolderRequest):
     """
-    Create a new project folder with auto-numbering.
-
-    Folder naming convention: p_{next_number}_{sanitized_project_name}
-    Example: p_84_my-saas-app
+    Create a new project folder.
 
     Returns:
         {
             path: Full path to created folder,
-            folder_name: Just the folder name (e.g., p_84_my-saas-app),
-            number: The assigned project number,
+            folder_name: Just the folder name,
             git_initialized: Whether git was initialized
         }
     """
@@ -111,21 +81,16 @@ def create_project_folder(request: CreateProjectFolderRequest):
         )
 
     # Sanitize project name
-    sanitized_name = sanitize_project_name(request.project_name)
-    if not sanitized_name:
+    folder_name = sanitize_project_name(request.project_name)
+    if not folder_name:
         raise HTTPException(
             status_code=400,
             detail="Project name results in empty folder name after sanitization"
         )
 
-    # Get next available number
-    next_number = get_next_project_number(base_path)
-
-    # Create folder name
-    folder_name = f"p_{next_number}_{sanitized_name}"
     full_path = os.path.join(base_path, folder_name)
 
-    # Check if folder already exists (shouldn't happen but be safe)
+    # Check if folder already exists
     if os.path.exists(full_path):
         raise HTTPException(
             status_code=409,
@@ -155,7 +120,6 @@ def create_project_folder(request: CreateProjectFolderRequest):
         return {
             "path": full_path,
             "folder_name": folder_name,
-            "number": next_number,
             "git_initialized": git_initialized
         }
 
@@ -318,7 +282,7 @@ def list_folders(request: ListFoldersRequest):
         {
             path: The requested path (expanded),
             parent: Parent directory path,
-            folders: List of { name, path, is_project, is_git_repo }
+            folders: List of { name, path, is_git_repo }
         }
     """
     path = expand_path(request.path)
@@ -330,7 +294,6 @@ def list_folders(request: ListFoldersRequest):
         )
 
     folders = []
-    project_pattern = re.compile(r'^p_\d+_')
 
     try:
         entries = sorted(os.listdir(path))
@@ -340,7 +303,6 @@ def list_folders(request: ListFoldersRequest):
                 folders.append({
                     "name": entry,
                     "path": full_path,
-                    "is_project": bool(project_pattern.match(entry)),
                     "is_git_repo": os.path.exists(os.path.join(full_path, ".git"))
                 })
     except PermissionError:

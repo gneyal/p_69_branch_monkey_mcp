@@ -103,10 +103,7 @@ def monkey_project_create_folder(
     machine_id: str,
     init_git: bool = True
 ) -> str:
-    """Create a new project folder on a local machine with auto-numbering.
-
-    This creates a folder named p_{next_number}_{project_name} in the base_path.
-    The next number is auto-incremented based on existing p_X_* folders.
+    """Create a new project folder on a local machine.
 
     Args:
         base_path: The base directory to create the project in (e.g., ~/Code)
@@ -115,11 +112,11 @@ def monkey_project_create_folder(
         init_git: Whether to initialize a git repository (default: True)
 
     Returns:
-        Information about the created folder including path and project number.
+        Information about the created folder including path.
 
     Example:
         monkey_project_create_folder("~/Code", "my-saas-app", "machine-abc123")
-        → Creates ~/Code/p_84_my-saas-app/ with git initialized
+        → Creates ~/Code/my-saas-app/ with git initialized
     """
     try:
         # Call the relay endpoint which forwards to the local server
@@ -134,14 +131,12 @@ def monkey_project_create_folder(
 
         path = result.get("path", "unknown")
         folder_name = result.get("folder_name", "unknown")
-        number = result.get("number", "?")
         git_initialized = result.get("git_initialized", False)
 
         output = f"""# Project Folder Created
 
 **Folder:** `{folder_name}`
 **Full Path:** `{path}`
-**Project Number:** {number}
 **Git Initialized:** {"Yes" if git_initialized else "No"}
 
 The folder is ready for your project files."""
