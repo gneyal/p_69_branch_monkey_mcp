@@ -361,6 +361,9 @@ def monkey_task_search(query: str, status: str = None, version: str = None) -> s
             params["status"] = status
         if version:
             params["version"] = version
+        # Include project_id if a project is focused (enables team task search)
+        if state.CURRENT_PROJECT_ID:
+            params["project_id"] = state.CURRENT_PROJECT_ID
 
         result = api_get("/api/tasks/search", params=params)
         tasks = result.get("tasks", [])
