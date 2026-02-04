@@ -158,6 +158,160 @@ def get_commit_diff(sha: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/local-claude/branch-graph")
+def get_branch_graph(limit: int = 50):
+    """Get commits with branch graph data for visualization.
+
+    Returns commits with parent relationships and branch info for
+    rendering a visual branch graph like GitHub/GitKraken.
+    """
+    work_dir = get_default_working_dir()
+    git_root = get_git_root(work_dir)
+    if not git_root:
+        raise HTTPException(status_code=400, detail="Not in a git repository")
+
+    try:
+        # Get all branches with their current commits
+        branches_result = subprocess.run(
+            ["git", "branch", "-a", "--format=%(refname:short)|%(objectname)|%(upstream:short)"],
+            cwd=git_root,
+            capture_output=True,
+            text=True
+        )
+
+        branches = {}
+        branch_colors = ["#22c55e", "#3b82f6", "#f97316", "#a855f7", "#ec4899", "#14b8a6"]
+        color_idx = 0
+
+        for line in branches_result.stdout.strip().split('\n'):
+            if not line or line.startswith('origin/HEAD'):
+                continue
+            parts = line.split('|')
+            if len(parts) >= 2:
+                branch_name = parts[0]
+                commit_sha = parts[1]
+                # Skip remote tracking refs that duplicate local branches
+                if branch_name.startswith('origin/'):
+                    local_name = branch_name.replace('origin/', '')
+                    if local_name in branches:
+                        continue
+
+                # Assign color (main/master get green)
+                if branch_name in ['main', 'master']:
+                    color = "#22c55e"  # Green for main
+                else:
+                    color = branch_colors[color_idx % len(branch_colors)]
+                    color_idx += 1
+
+                branches[branch_name] = {
+                    "name": branch_name,
+                    "head": commit_sha,
+                    "color": color
+                }
+
+        # Get commits with parent info - format: hash|parents|refs|message|author|date
+        commits_result = subprocess.run(
+            ["git", "log", f"-{limit}", "--all", "--pretty=format:%H|%P|%D|%s|%an|%ar|%ai", "--topo-order"],
+            cwd=git_root,
+            capture_output=True,
+            text=True
+        )
+
+        commits = []
+        commit_to_branches = {}  # Map commit -> branches that contain it
+
+        for line in commits_result.stdout.strip().split('\n'):
+            if not line:
+                continue
+            parts = line.split('|', 6)
+            if len(parts) >= 7:
+                sha = parts[0]
+                parents = parts[1].split() if parts[1] else []
+                refs = parts[2]
+                message = parts[3]
+                author = parts[4]
+                relative_date = parts[5]
+                date = parts[6]
+
+                # Parse refs to find branch names
+                branch_refs = []
+                is_head = False
+                is_main = False
+                if refs:
+                    for ref in refs.split(', '):
+                        ref = ref.strip()
+                        if ref == 'HEAD':
+                            is_head = True
+                        elif ref.startswith('HEAD -> '):
+                            is_head = True
+                            branch_refs.append(ref.replace('HEAD -> ', ''))
+                        elif not ref.startswith('origin/') and not ref.startswith('tag:'):
+                            branch_refs.append(ref)
+
+                        if 'main' in ref or 'master' in ref:
+                            is_main = True
+
+                commits.append({
+                    "hash": sha,
+                    "short_hash": sha[:7],
+                    "parents": parents,
+                    "parent_short": [p[:7] for p in parents],
+                    "branches": branch_refs,
+                    "is_head": is_head,
+                    "is_main": is_main,
+                    "message": message,
+                    "author": author,
+                    "relative_date": relative_date,
+                    "date": date,
+                    "refs": refs
+                })
+
+        # Calculate lane assignments for visualization
+        # Main branch gets lane 0, other branches get assigned dynamically
+        lanes = {}
+        lane_usage = {}  # Track which commits are using which lane
+
+        # First pass: assign main/master to lane 0
+        main_branch = None
+        for branch_name in branches:
+            if branch_name in ['main', 'master']:
+                main_branch = branch_name
+                lanes[branch_name] = 0
+                break
+
+        # Assign other branches to lanes
+        next_lane = 1
+        for branch_name in branches:
+            if branch_name not in lanes:
+                lanes[branch_name] = next_lane
+                next_lane += 1
+
+        # For each commit, determine its lane based on first branch ref
+        for commit in commits:
+            if commit['branches']:
+                # Use first branch as the commit's lane
+                for branch in commit['branches']:
+                    if branch in lanes:
+                        commit['lane'] = lanes[branch]
+                        commit['color'] = branches.get(branch, {}).get('color', '#6366f1')
+                        break
+
+            if 'lane' not in commit:
+                # Commits not on a branch tip - try to find their branch
+                # by looking at which branch head is an ancestor
+                commit['lane'] = 0  # Default to main lane
+                commit['color'] = '#6b7280'  # Gray for non-tip commits
+
+        return {
+            "branches": list(branches.values()),
+            "commits": commits,
+            "lanes": lanes,
+            "main_branch": main_branch or "main"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/local-claude/checkout/{sha}")
 def checkout_commit(sha: str):
     """Checkout to a specific commit.
