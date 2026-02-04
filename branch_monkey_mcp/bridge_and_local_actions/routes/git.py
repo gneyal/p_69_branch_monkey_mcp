@@ -159,13 +159,17 @@ def get_commit_diff(sha: str):
 
 
 @router.get("/local-claude/branch-graph")
-def get_branch_graph(limit: int = 50):
+def get_branch_graph(limit: int = 50, path: Optional[str] = None):
     """Get commits with branch graph data for visualization.
 
     Returns commits with parent relationships and branch info for
     rendering a visual branch graph like GitHub/GitKraken.
+
+    Args:
+        limit: Maximum number of commits to return
+        path: Optional directory path to use. Defaults to working directory.
     """
-    work_dir = get_default_working_dir()
+    work_dir = path or get_default_working_dir()
     git_root = get_git_root(work_dir)
     if not git_root:
         raise HTTPException(status_code=400, detail="Not in a git repository")
@@ -313,14 +317,19 @@ def get_branch_graph(limit: int = 50):
 
 
 @router.post("/local-claude/checkout/{sha}")
-def checkout_commit(sha: str, auto_stash: bool = True):
+def checkout_commit(sha: str, auto_stash: bool = True, path: Optional[str] = None):
     """Checkout to a specific commit.
 
     This will checkout the working directory to the specified commit.
     If auto_stash is True (default), uncommitted changes will be automatically
     stashed before checkout and can be restored later.
+
+    Args:
+        sha: The commit hash to checkout
+        auto_stash: Whether to auto-stash uncommitted changes (default True)
+        path: Optional directory path to use. Defaults to working directory.
     """
-    work_dir = get_default_working_dir()
+    work_dir = path or get_default_working_dir()
     git_root = get_git_root(work_dir)
     if not git_root:
         raise HTTPException(status_code=400, detail="Not in a git repository")
