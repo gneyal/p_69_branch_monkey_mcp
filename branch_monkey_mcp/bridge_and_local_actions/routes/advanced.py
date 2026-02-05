@@ -371,33 +371,44 @@ async def deploy_commit(request: DeployRequest):
     if verify_result.returncode != 0:
         raise HTTPException(status_code=404, detail=f"Commit not found: {commit_sha}")
 
-    # Detect Cloudflare project name
+    # Detect Cloudflare project name from wrangler config files
     cf_project = request.cloudflare_project
     if not cf_project:
-        # Try to detect from wrangler.toml (check root and frontend/)
-        for candidate in [Path(git_root) / "wrangler.toml", Path(git_root) / "frontend" / "wrangler.toml"]:
-            if candidate.exists():
+        wrangler_names = ["wrangler.toml", "wrangler.jsonc", "wrangler.json"]
+        search_dirs = [Path(git_root), Path(git_root) / "frontend"]
+        for search_dir in search_dirs:
+            for wname in wrangler_names:
+                candidate = search_dir / wname
+                if not candidate.exists():
+                    continue
                 try:
                     content = candidate.read_text()
-                    for line in content.split('\n'):
-                        if line.strip().startswith('name'):
-                            cf_project = line.split('=')[1].strip().strip('"').strip("'")
-                            break
+                    if wname.endswith(".toml"):
+                        for line in content.split('\n'):
+                            if line.strip().startswith('name'):
+                                cf_project = line.split('=')[1].strip().strip('"').strip("'")
+                                break
+                    else:
+                        # JSON/JSONC: strip comments then parse
+                        cleaned = re.sub(r'//.*?$', '', content, flags=re.MULTILINE)
+                        parsed = json.loads(cleaned)
+                        cf_project = parsed.get("name")
                 except Exception:
                     pass
                 if cf_project:
                     break
+            if cf_project:
+                break
 
     if not cf_project:
         raise HTTPException(
             status_code=400,
-            detail="Could not determine Cloudflare project name. Provide cloudflare_project or add wrangler.toml."
+            detail="Could not determine Cloudflare project name. Provide cloudflare_project or add a wrangler config."
         )
 
-    # Check wrangler is installed
-    wrangler_path = shutil.which("wrangler") or shutil.which("npx")
-    if not wrangler_path:
-        raise HTTPException(status_code=400, detail="wrangler CLI not found")
+    # Check wrangler is available
+    if not shutil.which("npx"):
+        raise HTTPException(status_code=400, detail="npx not found (needed for wrangler)")
 
     # Create temporary worktree at the specific commit
     worktrees_dir = Path(git_root) / ".worktrees"
@@ -425,35 +436,39 @@ async def deploy_commit(request: DeployRequest):
         frontend_path = worktree_path / "frontend"
         if frontend_path.exists() and (frontend_path / "package.json").exists():
             build_dir = frontend_path
-        elif not (worktree_path / "package.json").exists():
-            raise HTTPException(status_code=400, detail="No package.json found in project root or frontend/ directory")
 
-        # Install dependencies
-        print(f"[Deploy] Installing dependencies for {short_sha}...")
-        install_result = subprocess.run(
-            ["npm", "install"],
-            cwd=str(build_dir),
-            capture_output=True, text=True,
-            timeout=180
-        )
-        if install_result.returncode != 0:
-            raise HTTPException(status_code=500, detail=f"npm install failed: {install_result.stderr[:500]}")
+        has_package_json = (build_dir / "package.json").exists()
 
-        # Build
-        print(f"[Deploy] Building {short_sha}...")
-        build_result = subprocess.run(
-            request.build_command.split(),
-            cwd=str(build_dir),
-            capture_output=True, text=True,
-            timeout=300
-        )
-        if build_result.returncode != 0:
-            raise HTTPException(status_code=500, detail=f"Build failed: {build_result.stderr[:500]}")
+        # Only install + build if there's a package.json (skip for static sites)
+        if has_package_json:
+            print(f"[Deploy] Installing dependencies for {short_sha}...")
+            install_result = subprocess.run(
+                ["npm", "install"],
+                cwd=str(build_dir),
+                capture_output=True, text=True,
+                timeout=180
+            )
+            if install_result.returncode != 0:
+                raise HTTPException(status_code=500, detail=f"npm install failed: {install_result.stderr[:500]}")
 
-        # Deploy with wrangler
-        output_path = build_dir / request.build_output_dir
-        if not output_path.exists():
-            raise HTTPException(status_code=500, detail=f"Build output directory not found: {request.build_output_dir}")
+            print(f"[Deploy] Building {short_sha}...")
+            build_result = subprocess.run(
+                request.build_command.split(),
+                cwd=str(build_dir),
+                capture_output=True, text=True,
+                timeout=300
+            )
+            if build_result.returncode != 0:
+                raise HTTPException(status_code=500, detail=f"Build failed: {build_result.stderr[:500]}")
+
+        # Deploy using `wrangler pages deploy`
+        # For built projects, deploy the build output dir; for static sites, deploy the project dir
+        if has_package_json:
+            output_path = build_dir / request.build_output_dir
+            if not output_path.exists():
+                raise HTTPException(status_code=500, detail=f"Build output directory not found: {request.build_output_dir}")
+        else:
+            output_path = build_dir
 
         print(f"[Deploy] Deploying {short_sha} to Cloudflare Pages project '{cf_project}'...")
         deploy_result = subprocess.run(
