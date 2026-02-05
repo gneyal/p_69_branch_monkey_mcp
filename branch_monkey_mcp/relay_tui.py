@@ -6,12 +6,16 @@ statistics. Press L to view logs, Q to quit.
 """
 
 import curses
+import os
 import sys
 import threading
 import time
 from collections import deque
 from datetime import datetime, timezone
 from typing import Optional, Callable, Dict, Any
+
+# Reduce ESC key delay (default 1000ms is way too long)
+os.environ.setdefault("ESCDELAY", "25")
 
 
 class LogCapture:
@@ -123,7 +127,8 @@ class RelayTUI:
     def _main_loop(self, stdscr):
         curses.use_default_colors()
         curses.curs_set(0)
-        stdscr.timeout(self.REFRESH_MS)
+        # Short timeout so we poll keys every 100ms for responsive input
+        stdscr.timeout(100)
 
         if curses.has_colors():
             curses.init_pair(1, curses.COLOR_GREEN, -1)
@@ -135,22 +140,29 @@ class RelayTUI:
             except curses.error:
                 curses.init_pair(5, curses.COLOR_WHITE, -1)
 
-        while self._running:
-            try:
-                stdscr.erase()
-                h, w = stdscr.getmaxyx()
-                if self._view == "dashboard":
-                    self._draw_dashboard(stdscr, h, w)
-                else:
-                    self._draw_logs(stdscr, h, w)
-                stdscr.refresh()
-            except curses.error:
-                # Prevent busy-spin if drawing fails (e.g. terminal too small)
-                curses.napms(self.REFRESH_MS)
+        last_draw = 0.0
 
+        while self._running:
+            # Redraw every REFRESH_MS
+            now = time.monotonic()
+            if now - last_draw >= self.REFRESH_MS / 1000.0:
+                try:
+                    stdscr.erase()
+                    h, w = stdscr.getmaxyx()
+                    if self._view == "dashboard":
+                        self._draw_dashboard(stdscr, h, w)
+                    else:
+                        self._draw_logs(stdscr, h, w)
+                    stdscr.refresh()
+                except curses.error:
+                    pass
+                last_draw = time.monotonic()
+
+            # getch blocks for up to 100ms (set by timeout above)
             key = stdscr.getch()
             if key != -1:
                 self._handle_key(key)
+                last_draw = 0.0  # Force redraw after key press
 
     def _handle_key(self, key):
         if key == ord("q") or key == ord("Q"):
