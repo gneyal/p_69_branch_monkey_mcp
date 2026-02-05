@@ -17,7 +17,7 @@ from typing import Optional, Callable, Dict, Any
 # Reduce ESC key delay (default 1000ms is way too long)
 os.environ.setdefault("ESCDELAY", "25")
 
-from .logo import LOGO, LOGO_WIDTH, LOGO_HEIGHT
+from .logo import LOGO, LOGO_WIDTH, LOGO_HEIGHT, get_animated_attrs
 
 
 class LogCapture:
@@ -94,6 +94,10 @@ class RelayTUI:
         self._scroll_offset = 0
         self._original_stdout = sys.stdout
         self._original_stderr = sys.stderr
+        self._anim_frame = 0
+        self._editing_home = False
+        self._home_input = ""
+        self._home_cursor = 0
 
     def install_capture(self):
         """Redirect stdout/stderr to capture logs."""
@@ -151,13 +155,26 @@ class RelayTUI:
                 curses.init_pair(5, 8, -1)  # bright black (gray)
             except curses.error:
                 curses.init_pair(5, curses.COLOR_WHITE, -1)
+            # Logo animation: 6=dim green, 7=bright green (pair 1 is normal green)
+            try:
+                curses.init_pair(6, 22, -1)   # dark green (256-color)
+            except curses.error:
+                curses.init_pair(6, curses.COLOR_GREEN, -1)
+            try:
+                curses.init_pair(7, 46, -1)   # bright/lime green (256-color)
+            except curses.error:
+                curses.init_pair(7, curses.COLOR_GREEN, -1)
 
         last_draw = 0.0
+        # Logo animates faster than the stats refresh
+        ANIM_INTERVAL = 0.15  # ~7 fps for smooth shimmer
 
         while self._running:
-            # Redraw every REFRESH_MS
             now = time.monotonic()
-            if now - last_draw >= self.REFRESH_MS / 1000.0:
+            # Dashboard with animation needs faster redraws; other views use REFRESH_MS
+            interval = ANIM_INTERVAL if self._view == "dashboard" else self.REFRESH_MS / 1000.0
+            if now - last_draw >= interval:
+                self._anim_frame += 1
                 try:
                     stdscr.erase()
                     h, w = stdscr.getmaxyx()
@@ -173,10 +190,44 @@ class RelayTUI:
             # getch blocks for up to 100ms (set by timeout above)
             key = stdscr.getch()
             if key != -1:
-                self._handle_key(key)
+                self._handle_key(key, stdscr)
                 last_draw = 0.0  # Force redraw after key press
 
-    def _handle_key(self, key):
+    def _handle_key(self, key, stdscr=None):
+        # Home directory editing mode
+        if self._editing_home:
+            if key in (curses.KEY_ENTER, 10, 13):  # Enter
+                path = self._home_input.strip()
+                if path and os.path.isdir(os.path.expanduser(path)):
+                    self.state["home_dir"] = os.path.expanduser(path)
+                self._editing_home = False
+            elif key == 27:  # Escape — cancel
+                self._editing_home = False
+            elif key in (curses.KEY_BACKSPACE, 127, 8):
+                if self._home_cursor > 0:
+                    self._home_input = (
+                        self._home_input[: self._home_cursor - 1]
+                        + self._home_input[self._home_cursor :]
+                    )
+                    self._home_cursor -= 1
+            elif key == curses.KEY_LEFT:
+                self._home_cursor = max(0, self._home_cursor - 1)
+            elif key == curses.KEY_RIGHT:
+                self._home_cursor = min(len(self._home_input), self._home_cursor + 1)
+            elif key == curses.KEY_HOME or key == 1:  # Ctrl-A
+                self._home_cursor = 0
+            elif key == curses.KEY_END or key == 5:  # Ctrl-E
+                self._home_cursor = len(self._home_input)
+            elif 32 <= key <= 126:
+                ch = chr(key)
+                self._home_input = (
+                    self._home_input[: self._home_cursor]
+                    + ch
+                    + self._home_input[self._home_cursor :]
+                )
+                self._home_cursor += 1
+            return
+
         if key == ord("q") or key == ord("Q"):
             self._running = False
         elif key == ord("l") or key == ord("L"):
@@ -185,6 +236,13 @@ class RelayTUI:
             else:
                 self._view = "logs"
                 self._scroll_offset = 0
+        elif key == ord("h") or key == ord("H"):
+            if self._view == "dashboard":
+                self._editing_home = True
+                self._home_input = self.state.get("home_dir", "")
+                self._home_cursor = len(self._home_input)
+                if stdscr:
+                    curses.curs_set(1)
         elif key == curses.KEY_UP and self._view == "logs":
             self._scroll_offset += 1
         elif key == curses.KEY_DOWN and self._view == "logs":
@@ -234,19 +292,18 @@ class RelayTUI:
         bar_w = min(50, w - 4)
         y = 1
 
-        # Header — big retro logo or compact fallback
+        # Header — animated retro logo or compact fallback
         ver = f"v{s['version']}" if s["version"] else ""
         if h >= 30 and w >= LOGO_WIDTH + 6:
-            for i, line in enumerate(LOGO):
-                self._put(stdscr, y + i, col, line, self._green() | self._bold())
-            y += len(LOGO)
+            self._draw_animated_logo(stdscr, y, col)
+            y += LOGO_HEIGHT
             subtitle = f"relay {ver}"
             self._put(stdscr, y, col + LOGO_WIDTH - len(subtitle), subtitle, self._dim())
             y += 1
             self._hline(stdscr, y, col, bar_w)
             y += 2
         else:
-            self._put(stdscr, y, col, "Kompany Relay", self._bold())
+            self._put(stdscr, y, col, "kompany relay", self._bold() | self._green())
             self._put(stdscr, y, col + 15, ver, self._dim())
             y += 1
             self._hline(stdscr, y, col, bar_w)
@@ -258,18 +315,42 @@ class RelayTUI:
             return
 
         # Machine info
-        info = [
-            ("Machine", s.get("machine_name", "\u2014")),
-            ("Home", s.get("home_dir", "\u2014")),
-        ]
-        if s.get("project"):
-            info.append(("Project", s["project"]))
-        info.append(("Dashboard", s.get("dashboard_url", f"http://localhost:{s['port']}/")))
+        self._put(stdscr, y, lbl_col, "Machine", self._dim())
+        self._put(stdscr, y, val_col, s.get("machine_name", "\u2014"), self._bold())
+        y += 1
 
-        for label, value in info:
-            self._put(stdscr, y, lbl_col, label, self._dim())
-            self._put(stdscr, y, val_col, str(value), self._bold())
+        # Home — editable field
+        self._put(stdscr, y, lbl_col, "Home", self._dim())
+        if self._editing_home:
+            # Show input field with cursor
+            field_w = max(30, bar_w - val_col + col)
+            display = self._home_input[:field_w]
+            self._put(stdscr, y, val_col, display, self._bold() | self._cyan())
+            # Blinking cursor
+            cursor_x = val_col + min(self._home_cursor, field_w)
+            if 0 <= cursor_x < w - 1:
+                try:
+                    curses.curs_set(1)
+                    stdscr.move(y, cursor_x)
+                except curses.error:
+                    pass
+            # Hint
+            self._put(stdscr, y + 1, val_col, "Enter to save, Esc to cancel", self._dim())
+            y += 2
+        else:
+            home_val = s.get("home_dir", "\u2014")
+            self._put(stdscr, y, val_col, home_val, self._bold())
+            self._put(stdscr, y, val_col + len(home_val) + 1, "[H]", self._dim())
             y += 1
+
+        if s.get("project"):
+            self._put(stdscr, y, lbl_col, "Project", self._dim())
+            self._put(stdscr, y, val_col, s["project"], self._bold())
+            y += 1
+        dashboard_url = s.get("dashboard_url", f"http://localhost:{s['port']}/")
+        self._put(stdscr, y, lbl_col, "Dashboard", self._dim())
+        self._put(stdscr, y, val_col, dashboard_url, self._bold())
+        y += 1
 
         y += 1
         self._put(stdscr, y, lbl_col, "STATUS", self._dim())
@@ -356,12 +437,45 @@ class RelayTUI:
             y += 1
 
         # Footer
+        if not self._editing_home:
+            curses.curs_set(0)
         footer_y = h - 2
         self._hline(stdscr, footer_y - 1, col, bar_w)
-        self._put(stdscr, footer_y, lbl_col, "[L]", self._cyan() | self._bold())
-        self._put(stdscr, footer_y, lbl_col + 4, "Logs", self._dim())
-        self._put(stdscr, footer_y, lbl_col + 12, "[Q]", self._cyan() | self._bold())
-        self._put(stdscr, footer_y, lbl_col + 16, "Quit", self._dim())
+        x = lbl_col
+        self._put(stdscr, footer_y, x, "[L]", self._cyan() | self._bold())
+        self._put(stdscr, footer_y, x + 4, "Logs", self._dim())
+        x += 10
+        self._put(stdscr, footer_y, x, "[H]", self._cyan() | self._bold())
+        self._put(stdscr, footer_y, x + 4, "Home", self._dim())
+        x += 10
+        self._put(stdscr, footer_y, x, "[Q]", self._cyan() | self._bold())
+        self._put(stdscr, footer_y, x + 4, "Quit", self._dim())
+
+    def _draw_animated_logo(self, stdscr, y, col):
+        """Draw the logo with a sweeping green shimmer animation."""
+        # Map brightness levels (0=dim, 1=normal, 2=bright) to curses attrs
+        attr_map = [
+            curses.color_pair(6),                          # dim green
+            curses.color_pair(1),                          # normal green
+            curses.color_pair(7) | curses.A_BOLD,          # bright green
+        ]
+        h, w = stdscr.getmaxyx()
+        for i, line in enumerate(LOGO):
+            row_y = y + i
+            if row_y >= h:
+                break
+            attrs = get_animated_attrs(self._anim_frame, len(line))
+            for cx, ch in enumerate(line):
+                if ch == " ":
+                    continue
+                screen_x = col + cx
+                if screen_x >= w - 1:
+                    break
+                brightness = attrs[cx] if cx < len(attrs) else 1
+                try:
+                    stdscr.addch(row_y, screen_x, ch, attr_map[brightness])
+                except curses.error:
+                    pass
 
     def _draw_auth(self, stdscr, y, col, bar_w):
         s = self.state
