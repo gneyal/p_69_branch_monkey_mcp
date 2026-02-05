@@ -104,7 +104,8 @@ class LocalAgentManager:
         task_description: Optional[str] = None,
         working_dir: Optional[str] = None,
         prompt: Optional[str] = None,
-        skip_branch: bool = False
+        skip_branch: bool = False,
+        branch: Optional[str] = None
     ) -> dict:
         """Create and start a new local Claude Code agent."""
 
@@ -130,26 +131,41 @@ class LocalAgentManager:
         agent_id = str(uuid.uuid4())[:8]
         repo_dir = working_dir or get_default_working_dir()
         work_dir = repo_dir
-        branch = None
+        target_branch = branch  # Explicit branch from caller (e.g. 'staging')
         branch_created = False
         worktree_path = None
 
-        # Handle git worktree if in a git repo with task number (unless skip_branch is set)
-        print(f"[LocalAgent] Worktree check: task_number={task_number}, is_git={is_git_repo(repo_dir)}, skip_branch={skip_branch}")
-        if task_number and is_git_repo(repo_dir) and not skip_branch:
-            branch = generate_branch_name(task_number, task_title, agent_id)
-            print(f"[LocalAgent] Creating worktree for branch: {branch}")
-            result = create_worktree(repo_dir, branch, task_number, agent_id)
-            print(f"[LocalAgent] Worktree result: {result}")
+        # Handle git worktree if in a git repo
+        print(f"[LocalAgent] Worktree check: task_number={task_number}, branch={target_branch}, is_git={is_git_repo(repo_dir)}, skip_branch={skip_branch}")
+        if is_git_repo(repo_dir):
+            if task_number and not skip_branch:
+                # Task mode: generate branch name from task number
+                target_branch = generate_branch_name(task_number, task_title, agent_id)
+                print(f"[LocalAgent] Creating worktree for task branch: {target_branch}")
+                result = create_worktree(repo_dir, target_branch, task_number, agent_id)
+                print(f"[LocalAgent] Worktree result: {result}")
 
-            if result["success"]:
-                worktree_path = result["worktree_path"]
-                work_dir = worktree_path
-                branch_created = result["branch_created"]
+                if result["success"]:
+                    worktree_path = result["worktree_path"]
+                    work_dir = worktree_path
+                    branch_created = result["branch_created"]
+                else:
+                    target_branch = get_current_branch(repo_dir)
+            elif target_branch:
+                # Explicit branch mode (e.g. staging): create worktree for named branch
+                print(f"[LocalAgent] Creating worktree for explicit branch: {target_branch}")
+                result = create_worktree(repo_dir, target_branch, 0, f"{target_branch}-{agent_id}")
+                print(f"[LocalAgent] Worktree result: {result}")
+
+                if result["success"]:
+                    worktree_path = result["worktree_path"]
+                    work_dir = worktree_path
+                    branch_created = result["branch_created"]
+                else:
+                    target_branch = get_current_branch(repo_dir)
             else:
-                branch = get_current_branch(repo_dir)
-        elif is_git_repo(repo_dir):
-            branch = get_current_branch(repo_dir)
+                # No task, no explicit branch: work in current directory
+                target_branch = get_current_branch(repo_dir)
 
         # Build prompt
         if prompt:
@@ -158,7 +174,7 @@ class LocalAgentManager:
             if worktree_path:
                 worktree_info = f"""## IMPORTANT: Worktree Already Created
 You are working in an isolated git worktree at: `{worktree_path}`
-Branch: `{branch}`
+Branch: `{target_branch}`
 
 Do NOT create another worktree - you are already isolated. Skip any worktree creation steps.
 
@@ -172,7 +188,7 @@ Do NOT create another worktree - you are already isolated. Skip any worktree cre
                 "task_number": task_number,
                 "title": task_title or "Untitled task",
                 "description": task_description or "",
-                "branch": branch,
+                "branch": target_branch,
                 "worktree_path": str(worktree_path) if worktree_path else None
             }
             final_prompt = f"""Please start working on this task:
@@ -190,7 +206,7 @@ Do NOT create another worktree - you are already isolated. Skip any worktree cre
             repo_dir=repo_dir,
             work_dir=work_dir,
             worktree_path=worktree_path,
-            branch=branch,
+            branch=target_branch,
             branch_created=branch_created,
             status="starting"
         )
@@ -239,7 +255,7 @@ Do NOT create another worktree - you are already isolated. Skip any worktree cre
                 "type": "local",
                 "work_dir": work_dir,
                 "worktree_path": worktree_path,
-                "branch": branch,
+                "branch": target_branch,
                 "branch_created": branch_created,
                 "is_worktree": worktree_path is not None
             }

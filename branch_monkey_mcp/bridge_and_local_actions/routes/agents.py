@@ -28,6 +28,7 @@ class CreateAgentRequest(BaseModel):
     working_dir: Optional[str] = None
     prompt: Optional[str] = None
     skip_branch: bool = False
+    branch: Optional[str] = None
 
 
 class TaskExecuteRequest(BaseModel):
@@ -141,7 +142,8 @@ async def create_agent(request: CreateAgentRequest):
         task_description=request.description,
         working_dir=request.working_dir,
         prompt=request.prompt,
-        skip_branch=request.skip_branch
+        skip_branch=request.skip_branch,
+        branch=request.branch
     )
 
 

@@ -340,6 +340,153 @@ def delete_time_machine_preview(sha: str):
     return {"status": "stopped", "message": "Preview stopped and worktree cleaned up"}
 
 
+# =============================================================================
+# Deploy
+# =============================================================================
+
+class DeployRequest(BaseModel):
+    commit_sha: str
+    project_path: Optional[str] = None
+    cloudflare_project: Optional[str] = None
+    build_command: str = "npm run build"
+    build_output_dir: str = "build"
+
+
+@router.post("/deploy")
+async def deploy_commit(request: DeployRequest):
+    """Deploy a specific commit to Cloudflare Pages using wrangler."""
+    commit_sha = request.commit_sha
+    short_sha = commit_sha[:7]
+
+    work_dir = request.project_path or get_default_working_dir()
+    git_root = get_git_root(work_dir)
+    if not git_root:
+        raise HTTPException(status_code=404, detail="Not in a git repository")
+
+    # Verify commit exists
+    verify_result = subprocess.run(
+        ["git", "cat-file", "-t", commit_sha],
+        cwd=git_root, capture_output=True, text=True
+    )
+    if verify_result.returncode != 0:
+        raise HTTPException(status_code=404, detail=f"Commit not found: {commit_sha}")
+
+    # Detect Cloudflare project name
+    cf_project = request.cloudflare_project
+    if not cf_project:
+        # Try to detect from wrangler.toml
+        wrangler_path = Path(git_root) / "wrangler.toml"
+        if wrangler_path.exists():
+            try:
+                content = wrangler_path.read_text()
+                for line in content.split('\n'):
+                    if line.strip().startswith('name'):
+                        cf_project = line.split('=')[1].strip().strip('"').strip("'")
+                        break
+            except Exception:
+                pass
+
+    if not cf_project:
+        raise HTTPException(
+            status_code=400,
+            detail="Could not determine Cloudflare project name. Provide cloudflare_project or add wrangler.toml."
+        )
+
+    # Check wrangler is installed
+    wrangler_path = shutil.which("wrangler") or shutil.which("npx")
+    if not wrangler_path:
+        raise HTTPException(status_code=400, detail="wrangler CLI not found")
+
+    # Create temporary worktree at the specific commit
+    worktrees_dir = Path(git_root) / ".worktrees"
+    worktrees_dir.mkdir(exist_ok=True)
+    worktree_path = worktrees_dir / f"deploy-{short_sha}"
+
+    try:
+        # Remove existing if present
+        if worktree_path.exists():
+            subprocess.run(
+                ["git", "worktree", "remove", "--force", str(worktree_path)],
+                cwd=git_root, capture_output=True
+            )
+
+        # Create worktree at specific commit (detached HEAD)
+        create_result = subprocess.run(
+            ["git", "worktree", "add", "--detach", str(worktree_path), commit_sha],
+            cwd=git_root, capture_output=True, text=True
+        )
+        if create_result.returncode != 0:
+            raise HTTPException(status_code=500, detail=f"Failed to create worktree: {create_result.stderr}")
+
+        # Determine build directory (frontend/ or root)
+        build_dir = worktree_path
+        frontend_path = worktree_path / "frontend"
+        if frontend_path.exists() and (frontend_path / "package.json").exists():
+            build_dir = frontend_path
+
+        # Install dependencies
+        print(f"[Deploy] Installing dependencies for {short_sha}...")
+        install_result = subprocess.run(
+            ["npm", "install"],
+            cwd=str(build_dir),
+            capture_output=True, text=True,
+            timeout=180
+        )
+        if install_result.returncode != 0:
+            raise HTTPException(status_code=500, detail=f"npm install failed: {install_result.stderr[:500]}")
+
+        # Build
+        print(f"[Deploy] Building {short_sha}...")
+        build_result = subprocess.run(
+            request.build_command.split(),
+            cwd=str(build_dir),
+            capture_output=True, text=True,
+            timeout=300
+        )
+        if build_result.returncode != 0:
+            raise HTTPException(status_code=500, detail=f"Build failed: {build_result.stderr[:500]}")
+
+        # Deploy with wrangler
+        output_path = build_dir / request.build_output_dir
+        if not output_path.exists():
+            raise HTTPException(status_code=500, detail=f"Build output directory not found: {request.build_output_dir}")
+
+        print(f"[Deploy] Deploying {short_sha} to Cloudflare Pages project '{cf_project}'...")
+        deploy_result = subprocess.run(
+            ["npx", "wrangler", "pages", "deploy", str(output_path), "--project-name", cf_project],
+            cwd=str(build_dir),
+            capture_output=True, text=True,
+            timeout=300
+        )
+        if deploy_result.returncode != 0:
+            raise HTTPException(status_code=500, detail=f"wrangler deploy failed: {deploy_result.stderr[:500]}")
+
+        print(f"[Deploy] Successfully deployed {short_sha}")
+
+        return {
+            "success": True,
+            "commit_sha": commit_sha,
+            "project": cf_project,
+            "output": deploy_result.stdout[-500:] if deploy_result.stdout else ""
+        }
+
+    except HTTPException:
+        raise
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Deploy timed out")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # Cleanup worktree
+        try:
+            subprocess.run(
+                ["git", "worktree", "remove", "--force", str(worktree_path)],
+                cwd=git_root, capture_output=True
+            )
+        except Exception:
+            pass
+
+
 @router.get("/time-machine/previews")
 def list_time_machine_previews():
     """List active time machine previews."""
