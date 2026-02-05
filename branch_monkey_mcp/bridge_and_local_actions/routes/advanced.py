@@ -461,45 +461,35 @@ async def deploy_commit(request: DeployRequest):
             if build_result.returncode != 0:
                 raise HTTPException(status_code=500, detail=f"Build failed: {build_result.stderr[:500]}")
 
+        # Prepare wrangler config in the worktree for Pages projects
+        if is_pages_project:
+            output_dir = request.build_output_dir
+            if has_package_json:
+                output_path = build_dir / output_dir
+                if not output_path.exists():
+                    raise HTTPException(status_code=500, detail=f"Build output directory not found: {output_dir}")
+            wrangler_toml = build_dir / "wrangler.toml"
+            # Remove any existing jsonc/json configs and write a clean toml
+            for wname in ["wrangler.jsonc", "wrangler.json"]:
+                wpath = build_dir / wname
+                if wpath.exists():
+                    wpath.unlink()
+            wrangler_toml.write_text(
+                f'name = "{cf_project}"\n'
+                f'pages_build_output_dir = "{output_dir}"\n'
+            )
+
         # Deploy using the appropriate strategy
         print(f"[Deploy] Uploading preview {short_sha} for '{cf_project}' (pages={is_pages_project})...")
 
-        def _pages_deploy():
-            """Deploy as a Cloudflare Pages project."""
-            if has_package_json:
-                output_path = build_dir / request.build_output_dir
-                if not output_path.exists():
-                    raise HTTPException(status_code=500, detail=f"Build output directory not found: {request.build_output_dir}")
-            else:
-                output_path = build_dir
-
-            # Temporarily move wrangler configs aside so wrangler doesn't
-            # read an incomplete config and fail on pages_build_output_dir validation
-            moved = []
-            for wname in ["wrangler.toml", "wrangler.jsonc", "wrangler.json"]:
-                wpath = build_dir / wname
-                if wpath.exists():
-                    bak = wpath.with_suffix(wpath.suffix + ".deploybak")
-                    wpath.rename(bak)
-                    moved.append((wpath, bak))
-
-            try:
-                result = subprocess.run(
-                    ["npx", "wrangler", "pages", "deploy", str(output_path), "--project-name", cf_project, "--branch", f"preview-{short_sha}"],
-                    cwd=str(build_dir),
-                    capture_output=True, text=True, timeout=300
-                )
-            finally:
-                for wpath, bak in moved:
-                    if bak.exists():
-                        bak.rename(wpath)
-
-            if result.returncode != 0:
-                raise HTTPException(status_code=500, detail=f"Deploy failed: {result.stderr[:500]}")
-            return result
-
         if is_pages_project:
-            deploy_result = _pages_deploy()
+            deploy_result = subprocess.run(
+                ["npx", "wrangler", "pages", "deploy", "--project-name", cf_project, "--branch", f"preview-{short_sha}"],
+                cwd=str(build_dir),
+                capture_output=True, text=True, timeout=300
+            )
+            if deploy_result.returncode != 0:
+                raise HTTPException(status_code=500, detail=f"Deploy failed: {deploy_result.stderr[:500]}")
         else:
             deploy_result = subprocess.run(
                 ["npx", "wrangler", "versions", "upload", "--preview-alias", short_sha],
@@ -507,8 +497,7 @@ async def deploy_commit(request: DeployRequest):
                 capture_output=True, text=True, timeout=300
             )
             if deploy_result.returncode != 0:
-                # Fallback to pages deploy
-                deploy_result = _pages_deploy()
+                raise HTTPException(status_code=500, detail=f"Deploy failed: {deploy_result.stderr[:500]}")
 
         # Extract URL from output
         output = deploy_result.stdout + deploy_result.stderr
