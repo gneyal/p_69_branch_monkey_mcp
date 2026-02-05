@@ -287,6 +287,21 @@ def merge_worktree_branch(request: MergeRequest):
         raise HTTPException(status_code=400, detail="Branch name required - could not derive from worktree")
 
     try:
+        # Clean up any leftover merge/conflict state before starting
+        subprocess.run(
+            ["git", "merge", "--abort"],
+            cwd=git_root,
+            capture_output=True,
+            text=True
+        )
+        # Reset index in case merge --abort wasn't enough (e.g. unresolved index entries)
+        subprocess.run(
+            ["git", "reset", "--hard", "HEAD"],
+            cwd=git_root,
+            capture_output=True,
+            text=True
+        )
+
         # Checkout target branch
         result = subprocess.run(
             ["git", "checkout", target],
@@ -297,31 +312,27 @@ def merge_worktree_branch(request: MergeRequest):
         if result.returncode != 0:
             raise HTTPException(status_code=500, detail=f"Failed to checkout {target}: {result.stderr}")
 
-        # Merge source branch
+        # Merge source branch (auto-resolve conflicts favoring incoming branch)
         result = subprocess.run(
-            ["git", "merge", source, "--no-edit"],
+            ["git", "merge", source, "--no-edit", "-X", "theirs"],
             cwd=git_root,
             capture_output=True,
             text=True
         )
 
         if result.returncode != 0:
-            # Check if it's a conflict
-            if "CONFLICT" in result.stdout or "CONFLICT" in result.stderr:
-                return {
-                    "success": False,
-                    "status": "conflict",
-                    "message": "Merge conflict detected",
-                    "details": result.stdout + result.stderr
-                }
             raise HTTPException(status_code=500, detail=f"Merge failed: {result.stderr}")
+
+        # Check if conflicts were auto-resolved
+        auto_resolved = "Auto-merging" in result.stdout and "CONFLICT" not in result.stdout
 
         return {
             "success": True,
             "status": "merged",
             "message": f"Successfully merged {source} into {target}",
             "source_branch": source,
-            "target_branch": target
+            "target_branch": target,
+            "auto_resolved_conflicts": not auto_resolved if "Auto-merging" in result.stdout else False,
         }
     except HTTPException:
         raise
