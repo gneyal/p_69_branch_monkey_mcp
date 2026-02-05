@@ -21,8 +21,9 @@ router = APIRouter()
 
 class MergeRequest(BaseModel):
     task_number: int
-    branch: str
+    branch: Optional[str] = None  # Optional - will be derived from worktree if not provided
     target_branch: Optional[str] = None
+    path: Optional[str] = None  # Project path to use instead of default
 
 
 class OpenInEditorRequest(BaseModel):
@@ -32,9 +33,13 @@ class OpenInEditorRequest(BaseModel):
 
 
 @router.get("/merge-preview")
-def merge_preview(task_number: int, branch: str):
-    """Get commit info for merge preview visualization."""
-    work_dir = get_default_working_dir()
+def merge_preview(task_number: int, branch: str, path: Optional[str] = None):
+    """Get commit info for merge preview visualization.
+
+    Args:
+        path: Optional project path to use instead of default working directory.
+    """
+    work_dir = path or get_default_working_dir()
     git_root = get_git_root(work_dir)
     if not git_root:
         raise HTTPException(status_code=400, detail="Not in a git repository")
@@ -247,14 +252,39 @@ def open_in_editor(request: OpenInEditorRequest):
 
 @router.post("/merge")
 def merge_worktree_branch(request: MergeRequest):
-    """Merge a worktree branch into the target branch."""
-    work_dir = get_default_working_dir()
+    """Merge a worktree branch into the target branch.
+
+    Args:
+        request.branch: Optional source branch. If not provided, will be derived from worktree.
+        request.path: Optional project path to use instead of default working directory.
+    """
+    work_dir = request.path or get_default_working_dir()
     git_root = get_git_root(work_dir)
     if not git_root:
         raise HTTPException(status_code=400, detail="Not in a git repository")
 
     target = request.target_branch or get_current_branch(git_root)
+
+    # Get source branch - either from request or derive from worktree
     source = request.branch
+    if not source:
+        # Try to find the branch from the worktree for this task
+        worktree_path = find_worktree_path(request.task_number)
+        if worktree_path:
+            try:
+                result = subprocess.run(
+                    ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                    cwd=worktree_path,
+                    capture_output=True,
+                    text=True
+                )
+                if result.returncode == 0:
+                    source = result.stdout.strip()
+            except Exception:
+                pass
+
+    if not source:
+        raise HTTPException(status_code=400, detail="Branch name required - could not derive from worktree")
 
     try:
         # Checkout target branch
