@@ -155,24 +155,18 @@ class RelayTUI:
                 curses.init_pair(5, 8, -1)  # bright black (gray)
             except curses.error:
                 curses.init_pair(5, curses.COLOR_WHITE, -1)
-            # Logo glow gradient: 6-10 = dark to bright green (5 levels)
-            _logo_greens = [
-                (22, False),   # 6: very dark green
-                (28, False),   # 7: dark green
-                (34, False),   # 8: medium green
-                (46, False),   # 9: bright green
-                (82, True),    # 10: neon green + bold
-            ]
-            for i, (color, bold) in enumerate(_logo_greens):
-                pair = 6 + i
-                try:
-                    curses.init_pair(pair, color, -1)
-                except curses.error:
-                    curses.init_pair(pair, curses.COLOR_GREEN, -1)
+            # Logo glow: 3 levels (dim → normal → bright)
+            # pair 6 = dim green, pair 7 = green, pair 8 = bright white-green
+            try:
+                curses.init_pair(6, 22, -1)    # dim/dark green
+            except curses.error:
+                curses.init_pair(6, curses.COLOR_GREEN, -1)
+            curses.init_pair(7, curses.COLOR_GREEN, -1)  # normal green
+            curses.init_pair(8, curses.COLOR_WHITE, -1)   # bright highlight
 
         last_draw = 0.0
-        # Logo animates faster than the stats refresh
-        ANIM_INTERVAL = 0.15  # ~7 fps for smooth shimmer
+        # Logo animates at a calm pace
+        ANIM_INTERVAL = 0.2  # 5 fps — gentle, not frantic
 
         while self._running:
             now = time.monotonic()
@@ -457,7 +451,7 @@ class RelayTUI:
         self._put(stdscr, footer_y, x + 4, "Quit", self._dim())
 
     def _draw_animated_logo(self, stdscr, y, col):
-        """Draw the logo with an organic drifting glow (Amp Code orb style)."""
+        """Draw the logo with a subtle drifting glow."""
         h, w = stdscr.getmaxyx()
         for i, line in enumerate(LOGO):
             row_y = y + i
@@ -470,12 +464,14 @@ class RelayTUI:
                 screen_x = col + cx
                 if screen_x >= w - 1:
                     break
-                # Map 0.0–1.0 intensity to 5 color levels (pairs 6–10)
-                val = intensities[cx] if cx < len(intensities) else 0.3
-                level = min(4, int(val * 5))
-                attr = curses.color_pair(6 + level)
-                if level >= 4:
-                    attr |= curses.A_BOLD
+                val = intensities[cx] if cx < len(intensities) else 0.5
+                # 3 levels: dim green, green, bright white-green
+                if val > 0.75:
+                    attr = curses.color_pair(8) | curses.A_BOLD  # bright
+                elif val > 0.45:
+                    attr = curses.color_pair(7)                   # normal green
+                else:
+                    attr = curses.color_pair(6)                   # dim
                 try:
                     stdscr.addch(row_y, screen_x, ch, attr)
                 except curses.error:
