@@ -17,6 +17,16 @@ from typing import Optional, Callable, Dict, Any
 # Reduce ESC key delay (default 1000ms is way too long)
 os.environ.setdefault("ESCDELAY", "25")
 
+# Block-pixel ASCII art logo (43 chars wide, 5 lines tall)
+LOGO = [
+    "\u2588  \u2588  \u2588\u2588\u2588\u2588  \u2588   \u2588  \u2588\u2588\u2588\u2588   \u2588\u2588   \u2588   \u2588  \u2588   \u2588",
+    "\u2588 \u2588   \u2588  \u2588  \u2588\u2588 \u2588\u2588  \u2588  \u2588  \u2588  \u2588  \u2588\u2588  \u2588   \u2588 \u2588 ",
+    "\u2588\u2588    \u2588  \u2588  \u2588 \u2588 \u2588  \u2588\u2588\u2588\u2588  \u2588\u2588\u2588\u2588  \u2588 \u2588 \u2588    \u2588  ",
+    "\u2588 \u2588   \u2588  \u2588  \u2588   \u2588  \u2588     \u2588  \u2588  \u2588  \u2588\u2588    \u2588  ",
+    "\u2588  \u2588  \u2588\u2588\u2588\u2588  \u2588   \u2588  \u2588     \u2588  \u2588  \u2588   \u2588    \u2588  ",
+]
+LOGO_WIDTH = 43
+
 
 class LogCapture:
     """Intercepts writes to a stream and stores them in a ring buffer."""
@@ -231,13 +241,23 @@ class RelayTUI:
         bar_w = min(50, w - 4)
         y = 1
 
-        # Header
-        self._put(stdscr, y, col, "Kompany Relay", self._bold())
+        # Header — big retro logo or compact fallback
         ver = f"v{s['version']}" if s["version"] else ""
-        self._put(stdscr, y, col + 15, ver, self._dim())
-        y += 1
-        self._hline(stdscr, y, col, bar_w)
-        y += 2
+        if h >= 30 and w >= LOGO_WIDTH + 6:
+            for i, line in enumerate(LOGO):
+                self._put(stdscr, y + i, col, line, self._green() | self._bold())
+            y += len(LOGO)
+            subtitle = f"relay {ver}"
+            self._put(stdscr, y, col + LOGO_WIDTH - len(subtitle), subtitle, self._dim())
+            y += 1
+            self._hline(stdscr, y, col, bar_w)
+            y += 2
+        else:
+            self._put(stdscr, y, col, "Kompany Relay", self._bold())
+            self._put(stdscr, y, col + 15, ver, self._dim())
+            y += 1
+            self._hline(stdscr, y, col, bar_w)
+            y += 2
 
         # Auth screen (takes over dashboard while authenticating)
         if s["auth_state"] in ("authenticating", "waiting"):
