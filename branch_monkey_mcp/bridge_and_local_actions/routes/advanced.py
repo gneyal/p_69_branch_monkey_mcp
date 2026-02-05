@@ -425,6 +425,8 @@ async def deploy_commit(request: DeployRequest):
         frontend_path = worktree_path / "frontend"
         if frontend_path.exists() and (frontend_path / "package.json").exists():
             build_dir = frontend_path
+        elif not (worktree_path / "package.json").exists():
+            raise HTTPException(status_code=400, detail="No package.json found in project root or frontend/ directory")
 
         # Install dependencies
         print(f"[Deploy] Installing dependencies for {short_sha}...")
