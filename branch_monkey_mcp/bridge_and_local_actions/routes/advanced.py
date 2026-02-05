@@ -151,6 +151,7 @@ class TimeMachinePreviewRequest(BaseModel):
     commit_sha: str
     tunnel: Optional[bool] = False  # Request ngrok tunnel for remote access
     dev_script: Optional[str] = None  # Custom dev script (e.g., "npx serve -l {port}")
+    project_path: Optional[str] = None  # Project directory path (to find git root)
 
 
 @router.post("/time-machine/preview")
@@ -179,7 +180,7 @@ async def create_time_machine_preview(request: TimeMachinePreviewRequest):
         }
 
     try:
-        work_dir = get_default_working_dir()
+        work_dir = request.project_path or get_default_working_dir()
         git_root = get_git_root(work_dir)
         if not git_root:
             raise HTTPException(status_code=404, detail="Not in a git repository")
@@ -272,6 +273,7 @@ async def create_time_machine_preview(request: TimeMachinePreviewRequest):
             "process": process,
             "port": port,
             "worktree_path": str(worktree_path),
+            "git_root": git_root,
             "commit_sha": commit_sha,
             "started_at": datetime.now().isoformat(),
             "tunnel_url": None
@@ -325,8 +327,7 @@ def delete_time_machine_preview(sha: str):
 
     # Remove worktree
     try:
-        work_dir = get_default_working_dir()
-        git_root = get_git_root(work_dir)
+        git_root = info.get("git_root") or get_git_root(get_default_working_dir())
         if git_root:
             subprocess.run(
                 ["git", "worktree", "remove", "--force", info["worktree_path"]],
