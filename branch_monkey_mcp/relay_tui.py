@@ -17,15 +17,7 @@ from typing import Optional, Callable, Dict, Any
 # Reduce ESC key delay (default 1000ms is way too long)
 os.environ.setdefault("ESCDELAY", "25")
 
-# Block-pixel ASCII art logo (43 chars wide, 5 lines tall)
-LOGO = [
-    "\u2588  \u2588  \u2588\u2588\u2588\u2588  \u2588   \u2588  \u2588\u2588\u2588\u2588   \u2588\u2588   \u2588   \u2588  \u2588   \u2588",
-    "\u2588 \u2588   \u2588  \u2588  \u2588\u2588 \u2588\u2588  \u2588  \u2588  \u2588  \u2588  \u2588\u2588  \u2588   \u2588 \u2588 ",
-    "\u2588\u2588    \u2588  \u2588  \u2588 \u2588 \u2588  \u2588\u2588\u2588\u2588  \u2588\u2588\u2588\u2588  \u2588 \u2588 \u2588    \u2588  ",
-    "\u2588 \u2588   \u2588  \u2588  \u2588   \u2588  \u2588     \u2588  \u2588  \u2588  \u2588\u2588    \u2588  ",
-    "\u2588  \u2588  \u2588\u2588\u2588\u2588  \u2588   \u2588  \u2588     \u2588  \u2588  \u2588   \u2588    \u2588  ",
-]
-LOGO_WIDTH = 43
+from .logo import LOGO, LOGO_WIDTH, LOGO_HEIGHT
 
 
 class LogCapture:
