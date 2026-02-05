@@ -348,9 +348,6 @@ class DeployConfig(BaseModel):
     """Configuration for deploying a commit."""
     commit_sha: str
     project_path: Optional[str] = None
-    cloudflare_project: Optional[str] = None
-    build_command: str = "npm run build"
-    build_output_dir: str = "build"
 
 
 def _run(cmd: list, cwd: str, timeout: int = 300) -> subprocess.CompletedProcess:
@@ -362,7 +359,7 @@ def _run(cmd: list, cwd: str, timeout: int = 300) -> subprocess.CompletedProcess
 
 
 def _detect_wrangler_config(git_root: str) -> dict:
-    """Read wrangler config from project. Returns {name, is_pages}."""
+    """Auto-detect deploy config from wrangler files. Returns partial deploy config dict."""
     wrangler_names = ["wrangler.toml", "wrangler.jsonc", "wrangler.json"]
     search_dirs = [Path(git_root), Path(git_root) / "frontend"]
     for search_dir in search_dirs:
@@ -389,10 +386,48 @@ def _detect_wrangler_config(git_root: str) -> dict:
                     name = parsed.get("name")
                     is_pages = 'pages_build_output_dir' in parsed or 'main' not in parsed
                 if name:
-                    return {"name": name, "is_pages": is_pages}
+                    # Determine build_dir from where wrangler config was found
+                    build_dir = None
+                    if search_dir != Path(git_root):
+                        build_dir = str(search_dir.relative_to(git_root))
+                    return {
+                        "platform": "cloudflare-pages" if is_pages else "cloudflare-workers",
+                        "project": name,
+                        "build_command": "npm run build",
+                        "build_output_dir": "build",
+                        **({"build_dir": build_dir} if build_dir else {}),
+                    }
             except Exception:
                 pass
     return {}
+
+
+def _read_deploy_config(git_root: str) -> dict:
+    """Read .kompany/cerver_deploy.json from git root.
+
+    If missing, fall back to auto-detecting from wrangler config and write
+    .kompany/cerver_deploy.json for next time. Returns parsed config dict.
+    """
+    config_file = Path(git_root) / ".kompany" / "cerver_deploy.json"
+    if config_file.exists():
+        try:
+            return json.loads(config_file.read_text())
+        except Exception:
+            pass
+
+    # Fall back to auto-detection
+    detected = _detect_wrangler_config(git_root)
+    if not detected:
+        raise RuntimeError(
+            "No .kompany/cerver_deploy.json found and could not auto-detect from wrangler config. "
+            "Create .kompany/cerver_deploy.json with platform, project, build_command, build_output_dir."
+        )
+
+    # Write the detected config for next time
+    config_file.parent.mkdir(exist_ok=True)
+    config_file.write_text(json.dumps(detected, indent=2))
+    print(f"[Deploy] Auto-detected config and wrote {config_file}")
+    return detected
 
 
 def _extract_url(output: str) -> Optional[str]:
@@ -407,13 +442,13 @@ def _extract_url(output: str) -> Optional[str]:
 
 def deploy_commit_to_url(config: DeployConfig) -> str:
     """
-    Deploy a specific commit to Cloudflare and return the preview URL.
+    Deploy a specific commit using config from .kompany/cerver_deploy.json and return the URL.
 
-    1. Validates the commit exists
-    2. Detects project type (Pages vs Workers) from wrangler config
-    3. Creates a worktree for the commit
-    4. Builds if package.json exists
-    5. Deploys via wrangler
+    1. Reads deploy config from .kompany/cerver_deploy.json (auto-detects if missing)
+    2. Creates a worktree for the commit
+    3. Builds based on config
+    4. Deploys based on platform
+    5. Saves URL to .kompany/deploys.json
     6. Returns the preview URL
     """
     short_sha = config.commit_sha[:7]
@@ -424,12 +459,16 @@ def deploy_commit_to_url(config: DeployConfig) -> str:
     # Validate commit
     _run(["git", "cat-file", "-t", config.commit_sha], cwd=git_root, timeout=10)
 
-    # Detect project config
-    detected = _detect_wrangler_config(git_root)
-    cf_project = config.cloudflare_project or detected.get("name")
-    is_pages = detected.get("is_pages", False)
-    if not cf_project:
-        raise RuntimeError("Could not determine Cloudflare project name. Provide cloudflare_project or add a wrangler config.")
+    # Read deploy config
+    deploy_cfg = _read_deploy_config(git_root)
+    platform = deploy_cfg.get("platform", "cloudflare-pages")
+    project_name = deploy_cfg.get("project")
+    build_command = deploy_cfg.get("build_command", "npm run build")
+    build_output_dir = deploy_cfg.get("build_output_dir", "build")
+    cfg_build_dir = deploy_cfg.get("build_dir")  # e.g. "frontend"
+
+    if not project_name:
+        raise RuntimeError("No 'project' specified in .kompany/cerver_deploy.json")
     if not shutil.which("npx"):
         raise RuntimeError("npx not found (needed for wrangler)")
 
@@ -443,36 +482,58 @@ def deploy_commit_to_url(config: DeployConfig) -> str:
             subprocess.run(["git", "worktree", "remove", "--force", str(worktree_path)], cwd=git_root, capture_output=True)
         _run(["git", "worktree", "add", "--detach", str(worktree_path), config.commit_sha], cwd=git_root)
 
-        # Find build directory
-        build_dir = worktree_path
-        frontend_path = worktree_path / "frontend"
-        if frontend_path.exists() and (frontend_path / "package.json").exists():
-            build_dir = frontend_path
+        # Determine build directory from config
+        if cfg_build_dir:
+            build_dir = worktree_path / cfg_build_dir
+        else:
+            build_dir = worktree_path
 
-        # Build if needed
+        # Build
         has_package_json = (build_dir / "package.json").exists()
         if has_package_json:
             print(f"[Deploy] Installing deps for {short_sha}...")
             _run(["npm", "install"], cwd=str(build_dir), timeout=180)
             print(f"[Deploy] Building {short_sha}...")
-            _run(config.build_command.split(), cwd=str(build_dir), timeout=300)
+            _run(build_command.split(), cwd=str(build_dir), timeout=300)
 
-        # Deploy
-        print(f"[Deploy] Deploying {short_sha} to '{cf_project}' (pages={is_pages})...")
-        if is_pages:
-            output_path = str(build_dir / config.build_output_dir) if has_package_json else str(build_dir)
+        # Deploy based on platform
+        print(f"[Deploy] Deploying {short_sha} to '{project_name}' (platform={platform})...")
+        if platform == "cloudflare-pages":
+            output_path = str(build_dir / build_output_dir) if has_package_json else str(build_dir)
             result = _run(
-                ["npx", "wrangler", "pages", "deploy", output_path, "--project-name", cf_project, "--branch", f"preview-{short_sha}", "--commit-dirty=true"],
+                ["npx", "wrangler", "pages", "deploy", output_path, "--project-name", project_name, "--branch", f"preview-{short_sha}", "--commit-dirty=true"],
                 cwd=str(build_dir)
             )
-        else:
+        elif platform == "cloudflare-workers":
             result = _run(
                 ["npx", "wrangler", "versions", "upload", "--preview-alias", short_sha],
                 cwd=str(build_dir)
             )
+        else:
+            raise RuntimeError(f"Unsupported platform: {platform}")
 
         url = _extract_url(result.stdout + result.stderr)
         print(f"[Deploy] Done: {url or 'no URL detected'}")
+
+        # Save deploy info to .kompany/deploys.json
+        if url:
+            deploys_file = Path(git_root) / ".kompany" / "deploys.json"
+            deploys_file.parent.mkdir(exist_ok=True)
+            deploys = {}
+            if deploys_file.exists():
+                try:
+                    deploys = json.loads(deploys_file.read_text())
+                except Exception:
+                    pass
+            deploys[short_sha] = {
+                "url": url,
+                "commit_sha": config.commit_sha,
+                "project": project_name,
+                "platform": platform,
+                "deployed_at": datetime.utcnow().isoformat() + "Z",
+            }
+            deploys_file.write_text(json.dumps(deploys, indent=2))
+
         return url
 
     finally:
@@ -487,18 +548,61 @@ async def deploy_commit(request: DeployConfig):
     """Deploy a specific commit and return the preview URL."""
     try:
         url = deploy_commit_to_url(request)
+        git_root = get_git_root(request.project_path or get_default_working_dir())
+        deploy_cfg = _read_deploy_config(git_root) if git_root else {}
         return {
             "success": True,
             "commit_sha": request.commit_sha,
-            "project": request.cloudflare_project or _detect_wrangler_config(
-                get_git_root(request.project_path or get_default_working_dir()) or ""
-            ).get("name"),
+            "project": deploy_cfg.get("project"),
+            "platform": deploy_cfg.get("platform"),
             "url": url,
         }
     except subprocess.TimeoutExpired:
         raise HTTPException(status_code=504, detail="Deploy timed out")
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/deploys")
+def get_deploys(path: Optional[str] = None):
+    """Get saved deploy URLs from .kompany/deploys.json."""
+    git_root = get_git_root(path or get_default_working_dir())
+    if not git_root:
+        return {}
+    deploys_file = Path(git_root) / ".kompany" / "deploys.json"
+    if not deploys_file.exists():
+        return {}
+    try:
+        return json.loads(deploys_file.read_text())
+    except Exception:
+        return {}
+
+
+@router.post("/deploy/init")
+def deploy_init(path: Optional[str] = None):
+    """Auto-detect deploy platform and write .kompany/cerver_deploy.json."""
+    git_root = get_git_root(path or get_default_working_dir())
+    if not git_root:
+        raise HTTPException(status_code=404, detail="Not in a git repository")
+
+    config_file = Path(git_root) / ".kompany" / "cerver_deploy.json"
+    if config_file.exists():
+        try:
+            existing = json.loads(config_file.read_text())
+            return {"success": True, "config": existing, "created": False}
+        except Exception:
+            pass
+
+    detected = _detect_wrangler_config(git_root)
+    if not detected:
+        raise HTTPException(
+            status_code=404,
+            detail="Could not auto-detect deploy config. Create .kompany/cerver_deploy.json manually."
+        )
+
+    config_file.parent.mkdir(exist_ok=True)
+    config_file.write_text(json.dumps(detected, indent=2))
+    return {"success": True, "config": detected, "created": True}
 
 
 @router.get("/time-machine/previews")
