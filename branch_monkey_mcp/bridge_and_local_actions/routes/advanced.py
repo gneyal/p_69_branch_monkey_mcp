@@ -484,7 +484,7 @@ async def deploy_commit(request: DeployRequest):
 
         if is_pages_project:
             deploy_result = subprocess.run(
-                ["npx", "wrangler", "pages", "deploy", "--project-name", cf_project, "--branch", f"preview-{short_sha}"],
+                ["npx", "wrangler", "pages", "deploy", "--config", str(build_dir / "wrangler.toml"), "--project-name", cf_project, "--branch", f"preview-{short_sha}"],
                 cwd=str(build_dir),
                 capture_output=True, text=True, timeout=300
             )
