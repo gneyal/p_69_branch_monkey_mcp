@@ -344,7 +344,8 @@ def delete_time_machine_preview(sha: str):
 # Deploy
 # =============================================================================
 
-class DeployRequest(BaseModel):
+class DeployConfig(BaseModel):
+    """Configuration for deploying a commit."""
     commit_sha: str
     project_path: Optional[str] = None
     cloudflare_project: Optional[str] = None
@@ -352,27 +353,16 @@ class DeployRequest(BaseModel):
     build_output_dir: str = "build"
 
 
-@router.post("/deploy")
-async def deploy_commit(request: DeployRequest):
-    """Deploy a specific commit as a Cloudflare preview using wrangler versions upload."""
-    commit_sha = request.commit_sha
-    short_sha = commit_sha[:7]
+def _run(cmd: list, cwd: str, timeout: int = 300) -> subprocess.CompletedProcess:
+    """Run a command, raise with stderr on failure."""
+    result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr[:500])
+    return result
 
-    work_dir = request.project_path or get_default_working_dir()
-    git_root = get_git_root(work_dir)
-    if not git_root:
-        raise HTTPException(status_code=404, detail="Not in a git repository")
 
-    verify_result = subprocess.run(
-        ["git", "cat-file", "-t", commit_sha],
-        cwd=git_root, capture_output=True, text=True
-    )
-    if verify_result.returncode != 0:
-        raise HTTPException(status_code=404, detail=f"Commit not found: {commit_sha}")
-
-    # Detect Cloudflare project name and project type from wrangler config files
-    cf_project = request.cloudflare_project
-    is_pages_project = False
+def _detect_wrangler_config(git_root: str) -> dict:
+    """Read wrangler config from project. Returns {name, is_pages}."""
     wrangler_names = ["wrangler.toml", "wrangler.jsonc", "wrangler.json"]
     search_dirs = [Path(git_root), Path(git_root) / "frontend"]
     for search_dir in search_dirs:
@@ -382,150 +372,133 @@ async def deploy_commit(request: DeployRequest):
                 continue
             try:
                 content = candidate.read_text()
+                name = None
+                is_pages = False
                 if wname.endswith(".toml"):
                     for line in content.split('\n'):
                         stripped = line.strip()
-                        if not cf_project and stripped.startswith('name'):
-                            cf_project = line.split('=')[1].strip().strip('"').strip("'")
+                        if not name and stripped.startswith('name'):
+                            name = line.split('=')[1].strip().strip('"').strip("'")
                         if 'pages_build_output_dir' in stripped:
-                            is_pages_project = True
-                    # No 'main' entry means it's likely a Pages project
+                            is_pages = True
                     if not any(l.strip().startswith('main') for l in content.split('\n')):
-                        is_pages_project = True
+                        is_pages = True
                 else:
                     cleaned = re.sub(r'//.*?$', '', content, flags=re.MULTILINE)
                     parsed = json.loads(cleaned)
-                    if not cf_project:
-                        cf_project = parsed.get("name")
-                    if 'pages_build_output_dir' in parsed:
-                        is_pages_project = True
-                    elif 'main' not in parsed:
-                        is_pages_project = True
+                    name = parsed.get("name")
+                    is_pages = 'pages_build_output_dir' in parsed or 'main' not in parsed
+                if name:
+                    return {"name": name, "is_pages": is_pages}
             except Exception:
                 pass
-            if cf_project:
-                break
-        if cf_project:
-            break
+    return {}
 
+
+def _extract_url(output: str) -> Optional[str]:
+    """Extract a .pages.dev or .workers.dev URL from wrangler output."""
+    for line in output.split('\n'):
+        line = line.strip()
+        if 'https://' in line and ('.workers.dev' in line or '.pages.dev' in line):
+            start = line.index('https://')
+            return line[start:].split()[0].rstrip(')')
+    return None
+
+
+def deploy_commit_to_url(config: DeployConfig) -> str:
+    """
+    Deploy a specific commit to Cloudflare and return the preview URL.
+
+    1. Validates the commit exists
+    2. Detects project type (Pages vs Workers) from wrangler config
+    3. Creates a worktree for the commit
+    4. Builds if package.json exists
+    5. Deploys via wrangler
+    6. Returns the preview URL
+    """
+    short_sha = config.commit_sha[:7]
+    git_root = get_git_root(config.project_path or get_default_working_dir())
+    if not git_root:
+        raise RuntimeError("Not in a git repository")
+
+    # Validate commit
+    _run(["git", "cat-file", "-t", config.commit_sha], cwd=git_root, timeout=10)
+
+    # Detect project config
+    detected = _detect_wrangler_config(git_root)
+    cf_project = config.cloudflare_project or detected.get("name")
+    is_pages = detected.get("is_pages", False)
     if not cf_project:
-        raise HTTPException(
-            status_code=400,
-            detail="Could not determine Cloudflare project name. Provide cloudflare_project or add a wrangler config."
-        )
-
+        raise RuntimeError("Could not determine Cloudflare project name. Provide cloudflare_project or add a wrangler config.")
     if not shutil.which("npx"):
-        raise HTTPException(status_code=400, detail="npx not found (needed for wrangler)")
+        raise RuntimeError("npx not found (needed for wrangler)")
 
+    # Create worktree
     worktrees_dir = Path(git_root) / ".worktrees"
     worktrees_dir.mkdir(exist_ok=True)
     worktree_path = worktrees_dir / f"deploy-{short_sha}"
 
     try:
         if worktree_path.exists():
-            subprocess.run(
-                ["git", "worktree", "remove", "--force", str(worktree_path)],
-                cwd=git_root, capture_output=True
-            )
+            subprocess.run(["git", "worktree", "remove", "--force", str(worktree_path)], cwd=git_root, capture_output=True)
+        _run(["git", "worktree", "add", "--detach", str(worktree_path), config.commit_sha], cwd=git_root)
 
-        create_result = subprocess.run(
-            ["git", "worktree", "add", "--detach", str(worktree_path), commit_sha],
-            cwd=git_root, capture_output=True, text=True
-        )
-        if create_result.returncode != 0:
-            raise HTTPException(status_code=500, detail=f"Failed to create worktree: {create_result.stderr}")
-
+        # Find build directory
         build_dir = worktree_path
         frontend_path = worktree_path / "frontend"
         if frontend_path.exists() and (frontend_path / "package.json").exists():
             build_dir = frontend_path
 
+        # Build if needed
         has_package_json = (build_dir / "package.json").exists()
-
         if has_package_json:
-            print(f"[Deploy] Installing dependencies for {short_sha}...")
-            install_result = subprocess.run(
-                ["npm", "install"],
-                cwd=str(build_dir),
-                capture_output=True, text=True, timeout=180
-            )
-            if install_result.returncode != 0:
-                raise HTTPException(status_code=500, detail=f"npm install failed: {install_result.stderr[:500]}")
-
+            print(f"[Deploy] Installing deps for {short_sha}...")
+            _run(["npm", "install"], cwd=str(build_dir), timeout=180)
             print(f"[Deploy] Building {short_sha}...")
-            build_result = subprocess.run(
-                request.build_command.split(),
-                cwd=str(build_dir),
-                capture_output=True, text=True, timeout=300
+            _run(config.build_command.split(), cwd=str(build_dir), timeout=300)
+
+        # Deploy
+        print(f"[Deploy] Deploying {short_sha} to '{cf_project}' (pages={is_pages})...")
+        if is_pages:
+            output_path = str(build_dir / config.build_output_dir) if has_package_json else str(build_dir)
+            result = _run(
+                ["npx", "wrangler", "pages", "deploy", output_path, "--project-name", cf_project, "--branch", f"preview-{short_sha}", "--commit-dirty=true"],
+                cwd=str(build_dir)
             )
-            if build_result.returncode != 0:
-                raise HTTPException(status_code=500, detail=f"Build failed: {build_result.stderr[:500]}")
-
-        # Determine output directory for deploy
-        if is_pages_project:
-            if has_package_json:
-                output_path = build_dir / request.build_output_dir
-                if not output_path.exists():
-                    raise HTTPException(status_code=500, detail=f"Build output directory not found: {request.build_output_dir}")
-            else:
-                output_path = build_dir
-
-        # Deploy using the appropriate strategy
-        print(f"[Deploy] Uploading preview {short_sha} for '{cf_project}' (pages={is_pages_project})...")
-
-        if is_pages_project:
-            deploy_result = subprocess.run(
-                ["npx", "wrangler", "pages", "deploy", str(output_path), "--project-name", cf_project, "--branch", f"preview-{short_sha}", "--commit-dirty=true"],
-                cwd=str(build_dir),
-                capture_output=True, text=True, timeout=300
-            )
-            if deploy_result.returncode != 0:
-                raise HTTPException(status_code=500, detail=f"Deploy failed: {deploy_result.stderr[:500]}")
         else:
-            deploy_result = subprocess.run(
+            result = _run(
                 ["npx", "wrangler", "versions", "upload", "--preview-alias", short_sha],
-                cwd=str(build_dir),
-                capture_output=True, text=True, timeout=300
+                cwd=str(build_dir)
             )
-            if deploy_result.returncode != 0:
-                raise HTTPException(status_code=500, detail=f"Deploy failed: {deploy_result.stderr[:500]}")
 
-        # Extract URL from output
-        output = deploy_result.stdout + deploy_result.stderr
-        url = None
-        for line in output.split('\n'):
-            line = line.strip()
-            if 'https://' in line and ('.workers.dev' in line or '.pages.dev' in line):
-                import urllib.parse
-                start = line.index('https://')
-                rest = line[start:]
-                url = rest.split()[0].rstrip(')')
-                break
-
+        url = _extract_url(result.stdout + result.stderr)
         print(f"[Deploy] Done: {url or 'no URL detected'}")
+        return url
 
-        return {
-            "success": True,
-            "commit_sha": commit_sha,
-            "project": cf_project,
-            "url": url,
-            "output": output[-500:] if output else ""
-        }
-
-    except HTTPException:
-        raise
-    except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=504, detail="Deploy timed out")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
     finally:
         try:
-            subprocess.run(
-                ["git", "worktree", "remove", "--force", str(worktree_path)],
-                cwd=git_root, capture_output=True
-            )
+            subprocess.run(["git", "worktree", "remove", "--force", str(worktree_path)], cwd=git_root, capture_output=True)
         except Exception:
             pass
+
+
+@router.post("/deploy")
+async def deploy_commit(request: DeployConfig):
+    """Deploy a specific commit and return the preview URL."""
+    try:
+        url = deploy_commit_to_url(request)
+        return {
+            "success": True,
+            "commit_sha": request.commit_sha,
+            "project": request.cloudflare_project or _detect_wrangler_config(
+                get_git_root(request.project_path or get_default_working_dir()) or ""
+            ).get("name"),
+            "url": url,
+        }
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Deploy timed out")
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/time-machine/previews")
