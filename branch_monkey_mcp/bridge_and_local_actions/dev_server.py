@@ -10,6 +10,7 @@ import os
 import signal
 import socket
 import subprocess
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional
@@ -132,9 +133,16 @@ async def start_dev_server_process(
             set_proxy_target(info["port"], run_id)
             proxy_status = get_proxy_status()
 
-            # Create tunnel if requested and not already created
+            # Validate existing tunnel or create new one
             tunnel_url = info.get("tunnel_url")
-            if tunnel and not tunnel_url:
+            if tunnel_url:
+                # Verify the tunnel is still alive (check if it's in our tracked tunnels)
+                if run_id not in _ngrok_tunnels:
+                    # Tunnel object is gone (e.g. after process restart), recreate
+                    print(f"[Ngrok] Stale tunnel URL for {run_id}, recreating...")
+                    tunnel_url = start_ngrok_tunnel(info["port"], run_id)
+                    info["tunnel_url"] = tunnel_url
+            elif tunnel:
                 tunnel_url = start_ngrok_tunnel(info["port"], run_id)
                 if tunnel_url:
                     info["tunnel_url"] = tunnel_url
@@ -231,8 +239,26 @@ async def start_dev_server_process(
     # Persist to database for recovery after restart
     save_dev_server_to_db(run_id, _running_dev_servers[run_id])
 
-    # Wait for server to start
-    await asyncio.sleep(3)
+    # Wait for server to actually be ready (poll port, up to 15 seconds)
+    ready = False
+    for attempt in range(15):
+        await asyncio.sleep(1)
+        if is_port_in_use(port):
+            # Port is open, try an actual HTTP request to confirm
+            try:
+                req = urllib.request.Request(f"http://localhost:{port}/", method="HEAD")
+                urllib.request.urlopen(req, timeout=2)
+                ready = True
+                break
+            except Exception:
+                # Port is listening but not fully ready yet (e.g. compiling)
+                # Accept port-open as "good enough" after a few tries
+                if attempt >= 3:
+                    ready = True
+                    break
+
+    if not ready:
+        print(f"[DevServer] Warning: server on port {port} not ready after 15s, proceeding anyway")
 
     # Create ngrok tunnel if requested
     tunnel_url = None
@@ -256,10 +282,17 @@ async def start_dev_server_process(
 
 
 def list_running_dev_servers() -> dict:
-    """List running dev servers."""
+    """List running dev servers, cleaning up any that have died."""
     servers = []
+    dead_runs = []
     proxy_status = get_proxy_status()
+
     for run_id, info in _running_dev_servers.items():
+        # Validate the server is still running
+        if not _is_port_in_use(info["port"]):
+            dead_runs.append(run_id)
+            continue
+
         is_active = proxy_status["targetRunId"] == run_id
         servers.append({
             "runId": run_id,
@@ -272,6 +305,17 @@ def list_running_dev_servers() -> dict:
             "startedAt": info["started_at"],
             "worktreePath": info.get("worktree_path")
         })
+
+    # Clean up dead servers
+    for run_id in dead_runs:
+        print(f"[DevServer] Cleaning up dead server {run_id}")
+        stop_ngrok_tunnel(run_id)
+        delete_dev_server_from_db(run_id)
+        if _proxy_state["target_run_id"] == run_id:
+            _proxy_state["target_port"] = None
+            _proxy_state["target_run_id"] = None
+        del _running_dev_servers[run_id]
+
     return {"servers": servers, "proxy": proxy_status}
 
 
