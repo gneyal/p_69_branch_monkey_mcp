@@ -155,15 +155,20 @@ class RelayTUI:
                 curses.init_pair(5, 8, -1)  # bright black (gray)
             except curses.error:
                 curses.init_pair(5, curses.COLOR_WHITE, -1)
-            # Logo animation: 6=dim green, 7=bright green (pair 1 is normal green)
-            try:
-                curses.init_pair(6, 22, -1)   # dark green (256-color)
-            except curses.error:
-                curses.init_pair(6, curses.COLOR_GREEN, -1)
-            try:
-                curses.init_pair(7, 46, -1)   # bright/lime green (256-color)
-            except curses.error:
-                curses.init_pair(7, curses.COLOR_GREEN, -1)
+            # Logo glow gradient: 6-10 = dark to bright green (5 levels)
+            _logo_greens = [
+                (22, False),   # 6: very dark green
+                (28, False),   # 7: dark green
+                (34, False),   # 8: medium green
+                (46, False),   # 9: bright green
+                (82, True),    # 10: neon green + bold
+            ]
+            for i, (color, bold) in enumerate(_logo_greens):
+                pair = 6 + i
+                try:
+                    curses.init_pair(pair, color, -1)
+                except curses.error:
+                    curses.init_pair(pair, curses.COLOR_GREEN, -1)
 
         last_draw = 0.0
         # Logo animates faster than the stats refresh
@@ -452,28 +457,27 @@ class RelayTUI:
         self._put(stdscr, footer_y, x + 4, "Quit", self._dim())
 
     def _draw_animated_logo(self, stdscr, y, col):
-        """Draw the logo with a sweeping green shimmer animation."""
-        # Map brightness levels (0=dim, 1=normal, 2=bright) to curses attrs
-        attr_map = [
-            curses.color_pair(6),                          # dim green
-            curses.color_pair(1),                          # normal green
-            curses.color_pair(7) | curses.A_BOLD,          # bright green
-        ]
+        """Draw the logo with an organic drifting glow (Amp Code orb style)."""
         h, w = stdscr.getmaxyx()
         for i, line in enumerate(LOGO):
             row_y = y + i
             if row_y >= h:
                 break
-            attrs = get_animated_attrs(self._anim_frame, len(line))
+            intensities = get_animated_attrs(self._anim_frame, len(line), row=i)
             for cx, ch in enumerate(line):
                 if ch == " ":
                     continue
                 screen_x = col + cx
                 if screen_x >= w - 1:
                     break
-                brightness = attrs[cx] if cx < len(attrs) else 1
+                # Map 0.0–1.0 intensity to 5 color levels (pairs 6–10)
+                val = intensities[cx] if cx < len(intensities) else 0.3
+                level = min(4, int(val * 5))
+                attr = curses.color_pair(6 + level)
+                if level >= 4:
+                    attr |= curses.A_BOLD
                 try:
-                    stdscr.addch(row_y, screen_x, ch, attr_map[brightness])
+                    stdscr.addch(row_y, screen_x, ch, attr)
                 except curses.error:
                     pass
 
