@@ -21,7 +21,7 @@ def health_check():
 
 def _get_dashboard_response():
     """Return the dashboard HTML file response."""
-    dashboard_path = Path(__file__).parent.parent / "static" / "dashboard.html"
+    dashboard_path = Path(__file__).parent.parent.parent / "static" / "dashboard.html"
     return FileResponse(dashboard_path, media_type="text/html")
 
 
