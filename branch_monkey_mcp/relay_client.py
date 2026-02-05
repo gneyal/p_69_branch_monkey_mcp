@@ -4,7 +4,7 @@ Relay Client for Kompany Cloud
 This module allows a local machine to connect to Kompany Cloud
 and receive relayed requests from the web UI.
 
-VERSION: 0.2.0
+VERSION: 0.3.0
 
 The client:
 1. Authenticates using device auth flow (if no cached token)
@@ -59,7 +59,7 @@ class ConnectionState(Enum):
     RECONNECTING = "reconnecting"
 
 # Version
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 
 # Config file location
 CONFIG_DIR = Path.home() / ".kompany"
