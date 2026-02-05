@@ -357,10 +357,6 @@ def _run(cmd: list, cwd: str, timeout: int = 300) -> subprocess.CompletedProcess
     """Run a command, raise with stderr on failure."""
     result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout)
     if result.returncode != 0:
-        Path("/tmp/deploy-debug.log").write_text(
-            f"CMD: {' '.join(cmd)}\nCWD: {cwd}\nRETURN: {result.returncode}\n"
-            f"STDOUT:\n{result.stdout[-1000:]}\nSTDERR:\n{result.stderr[-1000:]}\n"
-        )
         raise RuntimeError(result.stderr[:500])
     return result
 
@@ -490,7 +486,6 @@ def deploy_commit_to_url(config: DeployConfig) -> str:
 async def deploy_commit(request: DeployConfig):
     """Deploy a specific commit and return the preview URL."""
     try:
-        Path("/tmp/deploy-debug.log").write_text(f"sha={request.commit_sha} path={request.project_path} cf={request.cloudflare_project}\n")
         url = deploy_commit_to_url(request)
         return {
             "success": True,
