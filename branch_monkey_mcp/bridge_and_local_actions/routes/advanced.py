@@ -370,33 +370,43 @@ async def deploy_commit(request: DeployRequest):
     if verify_result.returncode != 0:
         raise HTTPException(status_code=404, detail=f"Commit not found: {commit_sha}")
 
-    # Detect Cloudflare project name from wrangler config files
+    # Detect Cloudflare project name and project type from wrangler config files
     cf_project = request.cloudflare_project
-    if not cf_project:
-        wrangler_names = ["wrangler.toml", "wrangler.jsonc", "wrangler.json"]
-        search_dirs = [Path(git_root), Path(git_root) / "frontend"]
-        for search_dir in search_dirs:
-            for wname in wrangler_names:
-                candidate = search_dir / wname
-                if not candidate.exists():
-                    continue
-                try:
-                    content = candidate.read_text()
-                    if wname.endswith(".toml"):
-                        for line in content.split('\n'):
-                            if line.strip().startswith('name'):
-                                cf_project = line.split('=')[1].strip().strip('"').strip("'")
-                                break
-                    else:
-                        cleaned = re.sub(r'//.*?$', '', content, flags=re.MULTILINE)
-                        parsed = json.loads(cleaned)
+    is_pages_project = False
+    wrangler_names = ["wrangler.toml", "wrangler.jsonc", "wrangler.json"]
+    search_dirs = [Path(git_root), Path(git_root) / "frontend"]
+    for search_dir in search_dirs:
+        for wname in wrangler_names:
+            candidate = search_dir / wname
+            if not candidate.exists():
+                continue
+            try:
+                content = candidate.read_text()
+                if wname.endswith(".toml"):
+                    for line in content.split('\n'):
+                        stripped = line.strip()
+                        if not cf_project and stripped.startswith('name'):
+                            cf_project = line.split('=')[1].strip().strip('"').strip("'")
+                        if 'pages_build_output_dir' in stripped:
+                            is_pages_project = True
+                    # No 'main' entry means it's likely a Pages project
+                    if not any(l.strip().startswith('main') for l in content.split('\n')):
+                        is_pages_project = True
+                else:
+                    cleaned = re.sub(r'//.*?$', '', content, flags=re.MULTILINE)
+                    parsed = json.loads(cleaned)
+                    if not cf_project:
                         cf_project = parsed.get("name")
-                except Exception:
-                    pass
-                if cf_project:
-                    break
+                    if 'pages_build_output_dir' in parsed:
+                        is_pages_project = True
+                    elif 'main' not in parsed:
+                        is_pages_project = True
+            except Exception:
+                pass
             if cf_project:
                 break
+        if cf_project:
+            break
 
     if not cf_project:
         raise HTTPException(
@@ -451,16 +461,11 @@ async def deploy_commit(request: DeployRequest):
             if build_result.returncode != 0:
                 raise HTTPException(status_code=500, detail=f"Build failed: {build_result.stderr[:500]}")
 
-        # Deploy as a preview version with alias = short sha
-        print(f"[Deploy] Uploading preview {short_sha} for '{cf_project}'...")
-        deploy_result = subprocess.run(
-            ["npx", "wrangler", "versions", "upload", "--preview-alias", short_sha],
-            cwd=str(build_dir),
-            capture_output=True, text=True, timeout=300
-        )
+        # Deploy using the appropriate strategy
+        print(f"[Deploy] Uploading preview {short_sha} for '{cf_project}' (pages={is_pages_project})...")
 
-        if deploy_result.returncode != 0:
-            # Fallback to pages deploy for Pages projects
+        def _pages_deploy():
+            """Deploy as a Cloudflare Pages project."""
             if has_package_json:
                 output_path = build_dir / request.build_output_dir
                 if not output_path.exists():
@@ -468,13 +473,42 @@ async def deploy_commit(request: DeployRequest):
             else:
                 output_path = build_dir
 
+            # Temporarily move wrangler configs aside so wrangler doesn't
+            # read an incomplete config and fail on pages_build_output_dir validation
+            moved = []
+            for wname in ["wrangler.toml", "wrangler.jsonc", "wrangler.json"]:
+                wpath = build_dir / wname
+                if wpath.exists():
+                    bak = wpath.with_suffix(wpath.suffix + ".deploybak")
+                    wpath.rename(bak)
+                    moved.append((wpath, bak))
+
+            try:
+                result = subprocess.run(
+                    ["npx", "wrangler", "pages", "deploy", str(output_path), "--project-name", cf_project, "--branch", f"preview-{short_sha}"],
+                    cwd=str(build_dir),
+                    capture_output=True, text=True, timeout=300
+                )
+            finally:
+                for wpath, bak in moved:
+                    if bak.exists():
+                        bak.rename(wpath)
+
+            if result.returncode != 0:
+                raise HTTPException(status_code=500, detail=f"Deploy failed: {result.stderr[:500]}")
+            return result
+
+        if is_pages_project:
+            deploy_result = _pages_deploy()
+        else:
             deploy_result = subprocess.run(
-                ["npx", "wrangler", "pages", "deploy", str(output_path), "--project-name", cf_project, "--branch", f"preview-{short_sha}"],
+                ["npx", "wrangler", "versions", "upload", "--preview-alias", short_sha],
                 cwd=str(build_dir),
                 capture_output=True, text=True, timeout=300
             )
             if deploy_result.returncode != 0:
-                raise HTTPException(status_code=500, detail=f"Deploy failed: {deploy_result.stderr[:500]}")
+                # Fallback to pages deploy
+                deploy_result = _pages_deploy()
 
         # Extract URL from output
         output = deploy_result.stdout + deploy_result.stderr
