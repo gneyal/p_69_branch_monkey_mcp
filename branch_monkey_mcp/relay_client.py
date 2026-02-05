@@ -32,7 +32,7 @@ import sys
 import time
 import webbrowser
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Optional, Dict, Any
@@ -112,7 +112,8 @@ class RelayClient:
         self,
         cloud_url: str = DEFAULT_CLOUD_URL,
         local_port: int = 18081,
-        machine_name: Optional[str] = None
+        machine_name: Optional[str] = None,
+        tui=None
     ):
         self.cloud_url = cloud_url.rstrip("/")
         self.local_port = local_port
@@ -141,6 +142,13 @@ class RelayClient:
         self._reconnect_task: Optional[asyncio.Task] = None
         self._health_check_task: Optional[asyncio.Task] = None
         self._heartbeat_task: Optional[asyncio.Task] = None
+        self.tui = tui
+        self._request_count = 0
+
+    def _tui_update(self, **kwargs):
+        """Update TUI state if active."""
+        if self.tui:
+            self.tui.update(**kwargs)
 
     def _get_reconnect_delay(self) -> float:
         """Calculate reconnect delay with exponential backoff and jitter."""
@@ -220,6 +228,7 @@ class RelayClient:
 
         # Start device auth flow
         print("\n[Relay] Starting device authentication...")
+        self._tui_update(auth_state="authenticating")
         print(f"[Relay] Connecting to {self.cloud_url}")
 
         async with httpx.AsyncClient() as client:
@@ -234,6 +243,7 @@ class RelayClient:
                 data = response.json()
             except Exception as e:
                 print(f"[Relay] Failed to start device auth: {e}")
+                self._tui_update(auth_state="failed")
                 return False
 
             device_code = data["device_code"]
@@ -241,6 +251,8 @@ class RelayClient:
             verification_uri = data["verification_uri"]
             expires_in = data.get("expires_in", 900)
             interval = data.get("interval", 5)
+
+            self._tui_update(auth_state="waiting", auth_url=verification_uri, auth_code=user_code)
 
             print(f"\n{'='*50}")
             print(f"  To authorize this device, visit:")
@@ -292,13 +304,16 @@ class RelayClient:
                         })
 
                         print("\n[Relay] Authentication successful!")
+                        self._tui_update(auth_state="authenticated")
                         return True
 
                     elif data.get("error") == "access_denied":
                         print("[Relay] Authentication denied")
+                        self._tui_update(auth_state="failed")
                         return False
                     elif data.get("error") == "expired_token":
                         print("[Relay] Device code expired")
+                        self._tui_update(auth_state="failed")
                         return False
 
                     # Still pending
@@ -309,6 +324,7 @@ class RelayClient:
                     print(f"[Relay] Polling error: {e}")
 
             print("[Relay] Authentication timed out")
+            self._tui_update(auth_state="failed")
             return False
 
     async def _connect_channel(self) -> bool:
@@ -333,6 +349,7 @@ class RelayClient:
             return False
 
         self.connection_state = ConnectionState.CONNECTING
+        self._tui_update(connection="connecting")
 
         print(f"\n[Relay] Connecting to Supabase Realtime...")
         print(f"[Relay] User ID: {self.user_id}")
@@ -381,6 +398,7 @@ class RelayClient:
             self.connection_state = ConnectionState.CONNECTED
             self.reconnect_attempts = 0
             self.last_successful_heartbeat = datetime.utcnow()
+            self._tui_update(connection="connected", connected_at=datetime.now(timezone.utc))
 
             connection_logger.log("connected", detail=f"Channel {channel_name}")
             return True
@@ -388,6 +406,7 @@ class RelayClient:
         except Exception as e:
             print(f"[Relay] Connection failed: {e}")
             self.connection_state = ConnectionState.DISCONNECTED
+            self._tui_update(connection="disconnected")
             connection_logger.log("connection_failed", error=str(e))
             return False
 
@@ -398,6 +417,7 @@ class RelayClient:
                 await self.supabase.remove_channel(self.channel)
                 self.channel = None
             self.connection_state = ConnectionState.DISCONNECTED
+            self._tui_update(connection="disconnected")
             connection_logger.log("disconnected", detail="Channel removed")
             print("[Relay] Disconnected from channel")
         except Exception as e:
@@ -419,6 +439,7 @@ class RelayClient:
 
             delay = self._get_reconnect_delay()
             self.reconnect_attempts += 1
+            self._tui_update(connection="reconnecting", reconnect_count=self.reconnect_attempts)
 
             connection_logger.log(
                 "reconnecting",
@@ -592,6 +613,7 @@ class RelayClient:
                 # Success - reset failure counter
                 self.last_successful_heartbeat = datetime.utcnow()
                 consecutive_failures = 0
+                self._tui_update(last_heartbeat=datetime.now(timezone.utc))
                 connection_logger.log("heartbeat_ok")
 
             except asyncio.CancelledError:
@@ -670,6 +692,8 @@ class RelayClient:
             actual_payload = payload.get("payload", payload) if isinstance(payload, dict) else payload
 
             msg_type = actual_payload.get("type", "request")
+            self._request_count += 1
+            self._tui_update(requests_handled=self._request_count)
             print(f"[Relay] Received {msg_type}: {actual_payload.get('method', '')} {actual_payload.get('path', '')}")
 
             if msg_type == "stream_start":
@@ -959,6 +983,57 @@ def setup_mcp_config(working_dir: str, cloud_url: str = DEFAULT_CLOUD_URL) -> bo
         return False
 
 
+def _run_with_tui(args, home_dir, current_project):
+    """Run the relay with terminal UI."""
+    import threading
+    from .relay_tui import RelayTUI
+
+    tui = RelayTUI()
+    tui.update(
+        version=VERSION,
+        machine_name=args.name or socket.gethostname(),
+        home_dir=home_dir,
+        project=os.path.basename(current_project) if current_project else None,
+        project_path=current_project,
+        port=args.port,
+        dashboard_url=f"http://localhost:{args.port}/",
+        cloud_url=args.cloud_url,
+    )
+    tui.install_capture()
+
+    # Start local server
+    if not args.no_server:
+        start_server_in_background(
+            port=args.port,
+            home_dir=home_dir,
+            working_dir=current_project,
+        )
+        time.sleep(1)
+        tui.update(server_running=is_port_in_use(args.port))
+
+    # Start relay in background thread
+    relay_ref = [None]
+
+    def run_relay():
+        client = RelayClient(
+            cloud_url=args.cloud_url,
+            local_port=args.port,
+            machine_name=args.name,
+            tui=tui,
+        )
+        relay_ref[0] = client
+        try:
+            asyncio.run(client.connect())
+        except Exception as e:
+            print(f"[Relay] Error: {e}")
+
+    relay_thread = threading.Thread(target=run_relay, daemon=True)
+    relay_thread.start()
+
+    # TUI runs in main thread (blocks until quit)
+    tui.run(stop_callback=lambda: relay_ref[0] and relay_ref[0].stop())
+
+
 def main():
     """CLI entry point for branch-monkey-relay."""
     # Ensure output is not buffered (for background processes)
@@ -1003,6 +1078,11 @@ def main():
         default=os.getcwd(),
         help="Working directory for agent execution (default: current directory)"
     )
+    parser.add_argument(
+        "--no-tui",
+        action="store_true",
+        help="Disable terminal UI, show raw logs instead"
+    )
 
     args = parser.parse_args()
 
@@ -1046,6 +1126,16 @@ def main():
         # working_dir is a project, home is its parent
         current_project = working_dir
         home_dir = os.path.dirname(working_dir)
+
+    # Terminal UI mode (default when running in a terminal)
+    use_tui = not args.no_tui and sys.stdout.isatty()
+    if use_tui:
+        try:
+            from .relay_tui import RelayTUI  # noqa: F401
+            _run_with_tui(args, home_dir, current_project)
+            return
+        except ImportError:
+            pass  # Fall through to raw logs
 
     print(f"")
     print(f"\033[1mKompany Relay\033[0m v{VERSION}")
