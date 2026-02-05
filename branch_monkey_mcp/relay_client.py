@@ -39,6 +39,8 @@ from typing import Optional, Dict, Any
 
 import httpx
 
+from .connection_logger import connection_logger
+
 
 # Reconnection settings
 INITIAL_RECONNECT_DELAY = 1  # seconds
@@ -380,11 +382,13 @@ class RelayClient:
             self.reconnect_attempts = 0
             self.last_successful_heartbeat = datetime.utcnow()
 
+            connection_logger.log("connected", detail=f"Channel {channel_name}")
             return True
 
         except Exception as e:
             print(f"[Relay] Connection failed: {e}")
             self.connection_state = ConnectionState.DISCONNECTED
+            connection_logger.log("connection_failed", error=str(e))
             return False
 
     async def _disconnect_channel(self):
@@ -394,6 +398,7 @@ class RelayClient:
                 await self.supabase.remove_channel(self.channel)
                 self.channel = None
             self.connection_state = ConnectionState.DISCONNECTED
+            connection_logger.log("disconnected", detail="Channel removed")
             print("[Relay] Disconnected from channel")
         except Exception as e:
             print(f"[Relay] Error during disconnect: {e}")
@@ -415,6 +420,12 @@ class RelayClient:
             delay = self._get_reconnect_delay()
             self.reconnect_attempts += 1
 
+            connection_logger.log(
+                "reconnecting",
+                detail=f"Attempt {self.reconnect_attempts}",
+                attempt=self.reconnect_attempts,
+                delay=delay,
+            )
             print(f"[Relay] Reconnecting in {delay:.1f}s (attempt {self.reconnect_attempts})...")
             await asyncio.sleep(delay)
 
@@ -427,6 +438,11 @@ class RelayClient:
 
                 # Attempt reconnection
                 if await self._connect_channel():
+                    connection_logger.log(
+                        "reconnected",
+                        detail=f"After {self.reconnect_attempts} attempts",
+                        attempt=self.reconnect_attempts,
+                    )
                     print(f"[Relay] Reconnected successfully!")
                     return
 
@@ -462,7 +478,13 @@ class RelayClient:
                 if self.last_successful_heartbeat:
                     time_since_heartbeat = datetime.utcnow() - self.last_successful_heartbeat
                     if time_since_heartbeat.total_seconds() > HEARTBEAT_TIMEOUT:
-                        print(f"[Relay] No successful heartbeat for {time_since_heartbeat.total_seconds():.0f}s - reconnecting")
+                        stale_secs = int(time_since_heartbeat.total_seconds())
+                        connection_logger.log(
+                            "health_check_triggered_reconnect",
+                            detail=f"No heartbeat for {stale_secs}s",
+                            reason="heartbeat_timeout",
+                        )
+                        print(f"[Relay] No successful heartbeat for {stale_secs}s - reconnecting")
                         await self._trigger_reconnect()
 
             except asyncio.CancelledError:
@@ -570,11 +592,17 @@ class RelayClient:
                 # Success - reset failure counter
                 self.last_successful_heartbeat = datetime.utcnow()
                 consecutive_failures = 0
+                connection_logger.log("heartbeat_ok")
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 consecutive_failures += 1
+                connection_logger.log(
+                    "heartbeat_failed",
+                    detail=f"Consecutive failure #{consecutive_failures}",
+                    error=str(e),
+                )
                 print(f"[Relay] Heartbeat error (attempt {consecutive_failures}): {e}")
 
                 # If heartbeats keep failing, connection might be dead
@@ -619,6 +647,7 @@ class RelayClient:
 
     async def _shutdown(self):
         """Gracefully shutdown the relay client."""
+        connection_logger.log("shutdown", detail="Graceful shutdown")
         print("[Relay] Shutting down gracefully...")
         self._running = False
         self.should_reconnect = False
@@ -712,6 +741,11 @@ class RelayClient:
                                 })
 
         except Exception as e:
+            connection_logger.log(
+                "stream_error",
+                detail=f"Agent {agent_id}, stream {stream_id}",
+                error=str(e),
+            )
             print(f"[Relay] Stream error for agent {agent_id}: {e}")
             await self.channel.send_broadcast("stream_event", {
                 "stream_id": stream_id,

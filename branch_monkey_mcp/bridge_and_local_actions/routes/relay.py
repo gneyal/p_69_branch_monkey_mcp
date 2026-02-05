@@ -1,5 +1,5 @@
 """
-Relay status and heartbeat endpoints.
+Relay status, heartbeat, and diagnostics endpoints.
 """
 
 from datetime import datetime
@@ -8,6 +8,7 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from ..config import get_relay_status, update_relay_status
+from ...connection_logger import connection_logger
 
 router = APIRouter()
 
@@ -49,3 +50,19 @@ def relay_disconnect():
     """Mark relay as disconnected."""
     update_relay_status(connected=False)
     return {"status": "ok", "disconnected": True}
+
+
+@router.get("/diagnostics")
+def relay_diagnostics():
+    """
+    Connection diagnostics: uptime, reconnect count, heartbeat stats, recent events.
+
+    Returns structured data for debugging disconnection issues.
+    Use this endpoint from the dashboard, curl, or any monitoring tool.
+
+    Example: curl http://localhost:18081/api/relay/diagnostics | jq
+    """
+    diag = connection_logger.get_diagnostics()
+    # Merge in current relay status for full picture
+    diag["relay_status"] = get_relay_status()
+    return diag
