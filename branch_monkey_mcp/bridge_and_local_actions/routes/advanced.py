@@ -461,30 +461,21 @@ async def deploy_commit(request: DeployRequest):
             if build_result.returncode != 0:
                 raise HTTPException(status_code=500, detail=f"Build failed: {build_result.stderr[:500]}")
 
-        # Prepare wrangler config in the worktree for Pages projects
+        # Determine output directory for deploy
         if is_pages_project:
-            output_dir = request.build_output_dir
             if has_package_json:
-                output_path = build_dir / output_dir
+                output_path = build_dir / request.build_output_dir
                 if not output_path.exists():
-                    raise HTTPException(status_code=500, detail=f"Build output directory not found: {output_dir}")
-            wrangler_toml = build_dir / "wrangler.toml"
-            # Remove any existing jsonc/json configs and write a clean toml
-            for wname in ["wrangler.jsonc", "wrangler.json"]:
-                wpath = build_dir / wname
-                if wpath.exists():
-                    wpath.unlink()
-            wrangler_toml.write_text(
-                f'name = "{cf_project}"\n'
-                f'pages_build_output_dir = "{output_dir}"\n'
-            )
+                    raise HTTPException(status_code=500, detail=f"Build output directory not found: {request.build_output_dir}")
+            else:
+                output_path = build_dir
 
         # Deploy using the appropriate strategy
         print(f"[Deploy] Uploading preview {short_sha} for '{cf_project}' (pages={is_pages_project})...")
 
         if is_pages_project:
             deploy_result = subprocess.run(
-                ["npx", "wrangler", "pages", "deploy", "--project-name", cf_project, "--branch", f"preview-{short_sha}"],
+                ["npx", "wrangler", "pages", "deploy", str(output_path), "--project-name", cf_project, "--branch", f"preview-{short_sha}", "--commit-dirty=true"],
                 cwd=str(build_dir),
                 capture_output=True, text=True, timeout=300
             )
