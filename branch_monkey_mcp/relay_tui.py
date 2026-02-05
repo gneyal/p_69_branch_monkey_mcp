@@ -111,6 +111,16 @@ class RelayTUI:
         """Run the TUI. Blocks until user quits."""
         self._stop_callback = stop_callback
         try:
+            # Force stdin to read from the terminal. curses uses C-level
+            # stdin (fd 0) for getch(). If fd 0 was consumed or redirected
+            # (e.g. curl|bash, process managers, uvx), input silently breaks.
+            try:
+                tty_fd = os.open("/dev/tty", os.O_RDONLY)
+                if tty_fd != 0:
+                    os.dup2(tty_fd, 0)
+                    os.close(tty_fd)
+            except OSError:
+                pass
             curses.wrapper(self._main_loop)
         except KeyboardInterrupt:
             pass
