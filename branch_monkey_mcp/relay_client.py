@@ -914,13 +914,15 @@ def start_server_in_background(port: int = 18081, home_dir: Optional[str] = None
     thread = threading.Thread(target=run, daemon=True)
     thread.start()
 
-    # Wait a moment and verify the server started
+    # Poll for server readiness (up to 3 seconds)
     import time
-    time.sleep(0.5)
-    if is_port_in_use(port):
-        print(f"[Relay] Local agent server started on port {port}")
-    else:
-        print(f"[Relay] Warning: Server may have failed to start on port {port}")
+    for _ in range(15):
+        time.sleep(0.2)
+        if is_port_in_use(port):
+            print(f"[Relay] Local agent server started on port {port}")
+            return thread
+
+    print(f"[Relay] Warning: Server may have failed to start on port {port}")
 
     return thread
 
@@ -1008,7 +1010,6 @@ def _run_with_tui(args, home_dir, current_project):
             home_dir=home_dir,
             working_dir=current_project,
         )
-        time.sleep(1)
         tui.update(server_running=is_port_in_use(args.port))
 
     # Start relay in background thread

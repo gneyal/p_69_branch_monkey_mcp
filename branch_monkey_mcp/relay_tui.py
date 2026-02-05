@@ -145,10 +145,12 @@ class RelayTUI:
                     self._draw_logs(stdscr, h, w)
                 stdscr.refresh()
             except curses.error:
-                pass
+                # Prevent busy-spin if drawing fails (e.g. terminal too small)
+                curses.napms(self.REFRESH_MS)
 
             key = stdscr.getch()
-            self._handle_key(key)
+            if key != -1:
+                self._handle_key(key)
 
     def _handle_key(self, key):
         if key == ord("q") or key == ord("Q"):
