@@ -374,17 +374,19 @@ async def deploy_commit(request: DeployRequest):
     # Detect Cloudflare project name
     cf_project = request.cloudflare_project
     if not cf_project:
-        # Try to detect from wrangler.toml
-        wrangler_path = Path(git_root) / "wrangler.toml"
-        if wrangler_path.exists():
-            try:
-                content = wrangler_path.read_text()
-                for line in content.split('\n'):
-                    if line.strip().startswith('name'):
-                        cf_project = line.split('=')[1].strip().strip('"').strip("'")
-                        break
-            except Exception:
-                pass
+        # Try to detect from wrangler.toml (check root and frontend/)
+        for candidate in [Path(git_root) / "wrangler.toml", Path(git_root) / "frontend" / "wrangler.toml"]:
+            if candidate.exists():
+                try:
+                    content = candidate.read_text()
+                    for line in content.split('\n'):
+                        if line.strip().startswith('name'):
+                            cf_project = line.split('=')[1].strip().strip('"').strip("'")
+                            break
+                except Exception:
+                    pass
+                if cf_project:
+                    break
 
     if not cf_project:
         raise HTTPException(
