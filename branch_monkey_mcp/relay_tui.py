@@ -180,10 +180,11 @@ class RelayTUI:
         if key == ord("q") or key == ord("Q"):
             self._running = False
         elif key == ord("l") or key == ord("L"):
-            self._view = "logs"
-            self._scroll_offset = 0
-        elif key == ord("b") or key == ord("B") or key == 27:
-            self._view = "dashboard"
+            if self._view == "logs":
+                self._view = "dashboard"
+            else:
+                self._view = "logs"
+                self._scroll_offset = 0
         elif key == curses.KEY_UP and self._view == "logs":
             self._scroll_offset += 1
         elif key == curses.KEY_DOWN and self._view == "logs":
@@ -395,7 +396,7 @@ class RelayTUI:
 
         # Header
         self._put(stdscr, 1, col, "Logs", self._bold())
-        self._put(stdscr, 1, col + bar_w - 8, "[B] Back", self._cyan())
+        self._put(stdscr, 1, col + bar_w - 10, "[L] Toggle", self._cyan())
         self._hline(stdscr, 2, col, bar_w)
 
         # Log lines
@@ -430,7 +431,7 @@ class RelayTUI:
         footer_y = h - 2
         self._hline(stdscr, footer_y - 1, col, bar_w)
         x = col + 2
-        self._put(stdscr, footer_y, x, "[B]", self._cyan() | self._bold())
+        self._put(stdscr, footer_y, x, "[L]", self._cyan() | self._bold())
         self._put(stdscr, footer_y, x + 4, "Back", self._dim())
         x += 12
         self._put(stdscr, footer_y, x, "[\u2191\u2193]", self._cyan() | self._bold())
