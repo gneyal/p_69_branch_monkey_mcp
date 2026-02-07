@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from ..config import get_default_working_dir
 from ..git_utils import get_git_root, get_current_branch
-from ..worktree import find_worktree_path
+from ..worktree import find_worktree_path, find_actual_branch
 
 router = APIRouter()
 
@@ -267,21 +267,40 @@ def merge_worktree_branch(request: MergeRequest):
 
     # Get source branch - either from request or derive from worktree
     source = request.branch
+
+    # Verify the branch actually exists in git
+    if source:
+        verify = subprocess.run(
+            ["git", "rev-parse", "--verify", source],
+            cwd=git_root,
+            capture_output=True,
+            text=True
+        )
+        if verify.returncode != 0:
+            # Branch name doesn't resolve - try to find the actual branch
+            print(f"[Merge] Branch '{source}' not found, trying to derive from worktree for task {request.task_number}")
+            source = None
+
     if not source:
-        # Try to find the branch from the worktree for this task
-        worktree_path = find_worktree_path(request.task_number)
-        if worktree_path:
-            try:
-                result = subprocess.run(
-                    ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-                    cwd=worktree_path,
-                    capture_output=True,
-                    text=True
-                )
-                if result.returncode == 0:
-                    source = result.stdout.strip()
-            except Exception:
-                pass
+        # Try to find the actual branch from worktree
+        actual = find_actual_branch(request.task_number)
+        if actual:
+            source = actual
+        else:
+            # Last resort: check worktree HEAD directly
+            worktree_path = find_worktree_path(request.task_number)
+            if worktree_path:
+                try:
+                    result = subprocess.run(
+                        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                        cwd=worktree_path,
+                        capture_output=True,
+                        text=True
+                    )
+                    if result.returncode == 0:
+                        source = result.stdout.strip()
+                except Exception:
+                    pass
 
     if not source:
         raise HTTPException(status_code=400, detail="Branch name required - could not derive from worktree")
