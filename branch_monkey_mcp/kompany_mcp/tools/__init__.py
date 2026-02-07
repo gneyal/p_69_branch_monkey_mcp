@@ -11,6 +11,7 @@ from . import tasks
 from . import versions
 from . import teams
 from . import machines
+from . import metrics
 from . import connections
 from . import notes
 from . import domains
@@ -25,6 +26,7 @@ __all__ = [
     "versions",
     "teams",
     "machines",
+    "metrics",
     "connections",
     "notes",
     "domains",
