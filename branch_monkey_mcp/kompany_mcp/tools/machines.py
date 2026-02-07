@@ -41,9 +41,25 @@ def monkey_machine_create(
     name: str,
     description: str = "",
     goal: str = "",
-    status: str = "active"
+    status: str = "active",
+    position_x: float = 0,
+    position_y: float = 0,
+    metric_unit: str = "",
+    leading_metric_name: str = "",
+    machine_type: str = "processor"
 ) -> str:
     """Create a new machine (automated business process) in the current project.
+
+    Args:
+        name: Display name for the machine
+        description: Short description of what this machine does
+        goal: The machine's goal or objective
+        status: active, paused, or draft (default: active)
+        position_x: X position on canvas (default: 0)
+        position_y: Y position on canvas (default: 0)
+        metric_unit: Output metric name (e.g. "leads", "signups", "revenue")
+        leading_metric_name: Input/leading metric name (e.g. "calls made", "emails sent")
+        machine_type: generator, processor, funnel, monitor, router, aggregator, syncer, or nurture (default: processor)
 
     Requires a project to be focused first using monkey_project_focus.
     """
@@ -51,15 +67,49 @@ def monkey_machine_create(
         return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
 
     try:
-        result = api_post("/api/machines", {
+        payload = {
             "name": name,
             "description": description,
             "goal": goal,
             "status": status,
+            "position_x": position_x,
+            "position_y": position_y,
+            "metric_unit": metric_unit,
+            "leading_metric_name": leading_metric_name,
+            "machine_type": machine_type,
             "project_id": state.CURRENT_PROJECT_ID
-        })
+        }
+        result = api_post("/api/machines", payload)
         machine = result.get("machine", result)
-        return f"✅ Created machine: {name} (ID: {machine.get('id')}) in project {state.CURRENT_PROJECT_NAME}"
+        machine_id = machine.get("id")
+
+        # Seed metrics if provided
+        metrics_seeded = []
+        if metric_unit:
+            try:
+                api_post(f"/api/machines/{machine_id}/metrics/add", {
+                    "metric_name": metric_unit,
+                    "value": 0,
+                    "period": "weekly"
+                })
+                metrics_seeded.append(f"output: {metric_unit}")
+            except Exception:
+                pass
+        if leading_metric_name:
+            try:
+                api_post(f"/api/machines/{machine_id}/metrics/add", {
+                    "metric_name": leading_metric_name,
+                    "value": 0,
+                    "period": "weekly"
+                })
+                metrics_seeded.append(f"leading: {leading_metric_name}")
+            except Exception:
+                pass
+
+        output = f"✅ Created machine: {name} (ID: {machine_id}) in project {state.CURRENT_PROJECT_NAME}"
+        if metrics_seeded:
+            output += f"\n   Metrics seeded: {', '.join(metrics_seeded)}"
+        return output
     except Exception as e:
         return f"Error creating machine: {str(e)}"
 
