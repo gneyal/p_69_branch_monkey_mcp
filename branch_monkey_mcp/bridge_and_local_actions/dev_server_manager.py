@@ -33,15 +33,17 @@ from .dev_proxy import start_dev_proxy, set_proxy_target, get_proxy_status, _pro
 from .worktree import find_worktree_path
 
 
-def _wrap_cmd(cmd: str) -> str:
-    """Wrap a shell command to reset signals before exec.
-
-    Node.js/libuv crashes (PlatformInit assertion in uv_loop_init) when
-    SIGPIPE is SIG_IGN, which Python/uvicorn sets. Python's restore_signals
-    doesn't reliably fix this when forking from a multithreaded uvicorn
-    process. Using a shell wrapper with explicit trap reset is reliable.
-    """
-    return f"trap - PIPE INT TERM CHLD HUP; {cmd}"
+_SPAWN_DEFAULTS = dict(
+    # stdin must be DEVNULL: with start_new_session the inherited /dev/tty
+    # becomes invalid, causing Node.js PlatformInit to dup2 /dev/null onto
+    # fd 0. A dup2 bug in Node v18-v20 asserts the return is 0, but dup2
+    # returns the target fd — which crashes when fd > 0. Using DEVNULL
+    # gives a valid fd 0 so the dup2 path is never entered.
+    stdin=subprocess.DEVNULL,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.PIPE,
+    start_new_session=True,
+)
 
 
 # Optional ngrok support
@@ -293,12 +295,7 @@ class DevServerManager:
             command = dev_script.replace("{port}", str(port))
             print(f"[DevServerManager] Custom script for {run_id}: {command}")
             process = subprocess.Popen(
-                _wrap_cmd(command),
-                shell=True,
-                cwd=str(cwd),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                start_new_session=True,
+                command, shell=True, cwd=str(cwd), **_SPAWN_DEFAULTS,
             )
             return process, command
 
@@ -315,13 +312,12 @@ class DevServerManager:
             print(f"[DevServerManager] Installing deps for task {task_number}...")
             try:
                 subprocess.run(
-                    _wrap_cmd("npm install"),
+                    "npm install",
                     shell=True,
                     cwd=str(frontend_path),
-                    capture_output=True,
                     timeout=180,
                     check=True,
-                    start_new_session=True,
+                    **_SPAWN_DEFAULTS,
                 )
             except subprocess.TimeoutExpired:
                 raise HTTPException(status_code=500, detail="npm install timed out")
@@ -331,12 +327,7 @@ class DevServerManager:
         cmd = f"npm run dev -- --port {port}"
         print(f"[DevServerManager] Starting default server for {run_id} on port {port}")
         process = subprocess.Popen(
-            _wrap_cmd(cmd),
-            shell=True,
-            cwd=str(frontend_path),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            start_new_session=True,
+            cmd, shell=True, cwd=str(frontend_path), **_SPAWN_DEFAULTS,
         )
         return process, cmd
 
