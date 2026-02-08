@@ -12,7 +12,7 @@ from ..dev_proxy import (
     set_proxy_port,
     _proxy_state,
 )
-from ..dev_server import get_running_dev_servers
+from ..dev_server_manager import manager
 
 router = APIRouter()
 
@@ -26,7 +26,7 @@ def get_dev_proxy():
 @router.post("/dev-proxy")
 def set_dev_proxy_target(run_id: str):
     """Set proxy target to a specific running dev server by run_id."""
-    running_dev_servers = get_running_dev_servers()
+    running_dev_servers = manager.get_servers()
     if run_id not in running_dev_servers:
         raise HTTPException(status_code=404, detail=f"No dev server running for run {run_id}")
 

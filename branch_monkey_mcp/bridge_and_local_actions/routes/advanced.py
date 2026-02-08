@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from ..config import get_default_working_dir
 from ..git_utils import get_git_root
-from ..dev_server import start_ngrok_tunnel, stop_ngrok_tunnel
+from ..dev_server_manager import manager as dev_manager
 
 router = APIRouter()
 
@@ -167,7 +167,7 @@ async def create_time_machine_preview(request: TimeMachinePreviewRequest):
 
         # Create tunnel if requested and not already created
         if request.tunnel and not tunnel_url:
-            tunnel_url = start_ngrok_tunnel(info["port"], f"timemachine-{short_sha}")
+            tunnel_url = dev_manager.start_tunnel(info["port"], f"timemachine-{short_sha}")
             if tunnel_url:
                 info["tunnel_url"] = tunnel_url
 
@@ -285,7 +285,7 @@ async def create_time_machine_preview(request: TimeMachinePreviewRequest):
         # Create ngrok tunnel if requested
         tunnel_url = None
         if request.tunnel:
-            tunnel_url = start_ngrok_tunnel(port, f"timemachine-{short_sha}")
+            tunnel_url = dev_manager.start_tunnel(port, f"timemachine-{short_sha}")
             if tunnel_url:
                 _time_machine_previews[short_sha]["tunnel_url"] = tunnel_url
 
@@ -314,7 +314,7 @@ def delete_time_machine_preview(sha: str):
     info = _time_machine_previews[short_sha]
 
     # Stop ngrok tunnel if exists
-    stop_ngrok_tunnel(f"timemachine-{short_sha}")
+    dev_manager.stop_tunnel(f"timemachine-{short_sha}")
 
     # Stop dev server
     try:

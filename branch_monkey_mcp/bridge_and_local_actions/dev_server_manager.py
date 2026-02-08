@@ -1,0 +1,420 @@
+"""
+DevServerManager — single owner of dev-server process lifecycle.
+
+Responsibilities:
+  - Spawn dev-server subprocesses with proper health checking
+  - Port allocation and conflict detection
+  - Ngrok tunnel management (only after server is confirmed healthy)
+  - Proxy routing (which server is the active target)
+  - State persistence to SQLite for relay-restart recovery
+  - Structured logging with stderr capture on failure
+"""
+
+import asyncio
+import os
+import signal
+import socket
+import subprocess
+import urllib.request
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, Optional
+
+from pydantic import BaseModel
+
+from .database import (
+    init_dev_servers_db,
+    save_dev_server_to_db,
+    delete_dev_server_from_db,
+    load_dev_servers_from_db,
+    _is_port_in_use,
+)
+from .dev_proxy import start_dev_proxy, set_proxy_target, get_proxy_status, _proxy_state
+from .worktree import find_worktree_path
+
+
+# Optional ngrok support
+try:
+    from pyngrok import ngrok
+    NGROK_AVAILABLE = True
+except ImportError:
+    NGROK_AVAILABLE = False
+    ngrok = None
+
+
+BASE_DEV_PORT = 6000
+_READY_POLL_INTERVAL = 1       # seconds between port checks
+_READY_POLL_MAX_ATTEMPTS = 20  # total wait ≈ 20s
+_EARLY_EXIT_GRACE = 0.4        # seconds to wait before first poll() check
+
+
+class DevServerRequest(BaseModel):
+    """Incoming request to start a dev server."""
+    task_id: Optional[str] = None
+    task_number: int
+    run_id: Optional[str] = None
+    dev_script: Optional[str] = None
+    tunnel: Optional[bool] = False
+    worktree_path: Optional[str] = None
+    project_path: Optional[str] = None
+
+
+class DevServerManager:
+    """Manages the full lifecycle of local dev-server processes."""
+
+    def __init__(self):
+        self._servers: Dict[str, dict] = {}
+        self._tunnels: Dict[str, object] = {}
+        # Initialise DB table and recover servers that survived a relay restart
+        init_dev_servers_db()
+        load_dev_servers_from_db(self._servers)
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    async def start(
+        self,
+        task_number: int,
+        run_id: str,
+        task_id: Optional[str] = None,
+        dev_script: Optional[str] = None,
+        tunnel: bool = False,
+        worktree_path: Optional[str] = None,
+        project_path: Optional[str] = None,
+    ) -> dict:
+        """Start a dev server. Returns status dict for the frontend."""
+        from fastapi import HTTPException
+
+        self._ensure_proxy()
+
+        # --- Already running? ------------------------------------------------
+        if run_id in self._servers:
+            return self._handle_existing(run_id, tunnel)
+
+        # --- Resolve worktree ------------------------------------------------
+        worktree_path = self._resolve_worktree(task_number, worktree_path, project_path)
+
+        # --- Pick a port -----------------------------------------------------
+        port = self._find_available_port(BASE_DEV_PORT + task_number)
+
+        # --- Spawn the process -----------------------------------------------
+        process, command = self._spawn(dev_script, port, worktree_path, run_id, task_number)
+
+        # --- Register immediately (before readiness check) -------------------
+        self._servers[run_id] = {
+            "process": process,
+            "port": port,
+            "task_id": task_id,
+            "task_number": task_number,
+            "run_id": run_id,
+            "worktree_path": str(worktree_path),
+            "started_at": datetime.now().isoformat(),
+            "tunnel_url": None,
+        }
+        save_dev_server_to_db(run_id, self._servers[run_id])
+
+        # --- Wait for healthy or detect early death --------------------------
+        ready, error_msg = await self._wait_until_ready(process, port, run_id)
+
+        if not ready:
+            # Clean up the dead process
+            self._cleanup(run_id)
+            detail = f"Dev server failed to start"
+            if error_msg:
+                detail += f": {error_msg}"
+            raise HTTPException(status_code=500, detail=detail)
+
+        # --- Tunnel (only after confirmed healthy) ---------------------------
+        tunnel_url = None
+        if tunnel:
+            tunnel_url = self._start_tunnel(port, run_id)
+            self._servers[run_id]["tunnel_url"] = tunnel_url
+
+        # --- Point proxy at this server --------------------------------------
+        set_proxy_target(port, run_id)
+        proxy_status = get_proxy_status()
+
+        return {
+            "port": port,
+            "url": f"http://localhost:{port}",
+            "proxyUrl": proxy_status["proxyUrl"],
+            "tunnelUrl": tunnel_url,
+            "runId": run_id,
+            "status": "started",
+        }
+
+    def stop(self, run_id: str) -> dict:
+        """Stop a running dev server."""
+        from fastapi import HTTPException
+
+        if run_id not in self._servers:
+            raise HTTPException(status_code=404, detail="Server not found")
+
+        self._cleanup(run_id)
+        return {"status": "stopped", "runId": run_id}
+
+    def list(self) -> dict:
+        """List running dev servers, pruning any that have died."""
+        servers = []
+        dead = []
+        proxy_status = get_proxy_status()
+
+        for run_id, info in self._servers.items():
+            if not _is_port_in_use(info["port"]):
+                dead.append(run_id)
+                continue
+
+            is_active = proxy_status["targetRunId"] == run_id
+            servers.append({
+                "runId": run_id,
+                "taskNumber": info.get("task_number"),
+                "port": info["port"],
+                "url": f"http://localhost:{info['port']}",
+                "proxyUrl": proxy_status["proxyUrl"] if is_active else None,
+                "tunnelUrl": info.get("tunnel_url"),
+                "isActive": is_active,
+                "startedAt": info["started_at"],
+                "worktreePath": info.get("worktree_path"),
+            })
+
+        for run_id in dead:
+            print(f"[DevServerManager] Pruning dead server {run_id}")
+            self._cleanup(run_id)
+
+        return {"servers": servers, "proxy": proxy_status}
+
+    def get_servers(self) -> Dict[str, dict]:
+        """Raw dict of tracked servers (used by proxy route)."""
+        return self._servers
+
+    # ------------------------------------------------------------------
+    # Tunnel helpers (exposed for advanced.py time-machine reuse)
+    # ------------------------------------------------------------------
+
+    def start_tunnel(self, port: int, run_id: str) -> Optional[str]:
+        return self._start_tunnel(port, run_id)
+
+    def stop_tunnel(self, run_id: str):
+        self._stop_tunnel(run_id)
+
+    # ------------------------------------------------------------------
+    # Internals
+    # ------------------------------------------------------------------
+
+    def _ensure_proxy(self):
+        if not _proxy_state["running"]:
+            start_dev_proxy()
+
+    def _handle_existing(self, run_id: str, tunnel: bool) -> dict:
+        """Return status for an already-tracked server, re-validate health."""
+        info = self._servers[run_id]
+
+        if _is_port_in_use(info["port"]):
+            set_proxy_target(info["port"], run_id)
+            proxy_status = get_proxy_status()
+
+            tunnel_url = info.get("tunnel_url")
+            if tunnel_url and run_id not in self._tunnels:
+                print(f"[DevServerManager] Stale tunnel for {run_id}, recreating")
+                tunnel_url = self._start_tunnel(info["port"], run_id)
+                info["tunnel_url"] = tunnel_url
+            elif not tunnel_url and tunnel:
+                tunnel_url = self._start_tunnel(info["port"], run_id)
+                info["tunnel_url"] = tunnel_url
+
+            return {
+                "port": info["port"],
+                "url": f"http://localhost:{info['port']}",
+                "proxyUrl": proxy_status["proxyUrl"],
+                "tunnelUrl": tunnel_url,
+                "runId": run_id,
+                "status": "already_running",
+            }
+
+        # Process died — clean up and let caller retry
+        print(f"[DevServerManager] Stale entry for {run_id} (port {info['port']} dead)")
+        self._cleanup(run_id)
+        # Return None so the caller's "already running" check falls through
+        # Actually, since we deleted, re-raise so the route can call start again
+        from fastapi import HTTPException
+        raise HTTPException(status_code=410, detail="Server died, please retry")
+
+    def _resolve_worktree(self, task_number: int, worktree_path: Optional[str], project_path: Optional[str]) -> str:
+        from fastapi import HTTPException
+
+        if worktree_path:
+            if not Path(worktree_path).exists():
+                raise HTTPException(status_code=404, detail=f"Worktree path not found: {worktree_path}")
+            print(f"[DevServerManager] Using provided worktree: {worktree_path}")
+            return worktree_path
+
+        resolved = find_worktree_path(task_number, project_path)
+        if not resolved:
+            detail = f"No worktree found for task {task_number}"
+            if project_path:
+                detail += f" in {project_path}"
+            raise HTTPException(status_code=404, detail=detail)
+        return resolved
+
+    @staticmethod
+    def _find_available_port(base: int) -> int:
+        port = base
+        while True:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                if s.connect_ex(("localhost", port)) != 0:
+                    return port
+            port += 1
+            if port > base + 100:
+                raise RuntimeError("No available port in range")
+
+    def _spawn(self, dev_script: Optional[str], port: int, cwd: str, run_id: str, task_number: int):
+        """Spawn the subprocess. Returns (process, command_str)."""
+        from fastapi import HTTPException
+
+        if dev_script:
+            command = dev_script.replace("{port}", str(port))
+            print(f"[DevServerManager] Custom script for {run_id}: {command}")
+            process = subprocess.Popen(
+                command,
+                shell=True,
+                cwd=str(cwd),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                start_new_session=True,
+            )
+            return process, command
+
+        # Default: npm run dev in frontend/
+        frontend_path = Path(cwd) / "frontend"
+        if not frontend_path.exists():
+            raise HTTPException(
+                status_code=404,
+                detail="No frontend directory in worktree. Configure a dev script in project settings.",
+            )
+
+        node_modules = frontend_path / "node_modules"
+        if not node_modules.exists():
+            print(f"[DevServerManager] Installing deps for task {task_number}...")
+            try:
+                subprocess.run(
+                    ["npm", "install"],
+                    cwd=str(frontend_path),
+                    capture_output=True,
+                    timeout=180,
+                    check=True,
+                )
+            except subprocess.TimeoutExpired:
+                raise HTTPException(status_code=500, detail="npm install timed out")
+            except subprocess.CalledProcessError as e:
+                raise HTTPException(status_code=500, detail=f"npm install failed: {e.stderr}")
+
+        cmd = ["npm", "run", "dev", "--", "--port", str(port)]
+        print(f"[DevServerManager] Starting default server for {run_id} on port {port}")
+        process = subprocess.Popen(
+            cmd,
+            cwd=str(frontend_path),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        return process, " ".join(cmd)
+
+    async def _wait_until_ready(self, process: subprocess.Popen, port: int, run_id: str):
+        """Poll until the server is healthy or confirmed dead.
+
+        Returns (ready: bool, error_message: str | None).
+        """
+        # Brief grace period before first health check
+        await asyncio.sleep(_EARLY_EXIT_GRACE)
+
+        for attempt in range(_READY_POLL_MAX_ATTEMPTS):
+            # --- Check if process died ---
+            exit_code = process.poll()
+            if exit_code is not None:
+                stderr_out = ""
+                try:
+                    stderr_out = process.stderr.read().decode("utf-8", errors="replace").strip()
+                except Exception:
+                    pass
+                print(f"[DevServerManager] Process for {run_id} exited with code {exit_code}")
+                if stderr_out:
+                    # Limit log noise
+                    truncated = stderr_out[:1000]
+                    print(f"[DevServerManager] stderr: {truncated}")
+                return False, stderr_out[:500] or f"Process exited with code {exit_code}"
+
+            # --- Check if port is listening ---
+            if _is_port_in_use(port):
+                try:
+                    req = urllib.request.Request(f"http://localhost:{port}/", method="HEAD")
+                    urllib.request.urlopen(req, timeout=2)
+                    print(f"[DevServerManager] Server {run_id} ready on port {port} (attempt {attempt + 1})")
+                    return True, None
+                except Exception:
+                    # Port open but HTTP not ready yet — accept after a few tries
+                    if attempt >= 3:
+                        print(f"[DevServerManager] Server {run_id} port {port} open (accepting)")
+                        return True, None
+
+            await asyncio.sleep(_READY_POLL_INTERVAL)
+
+        # Timed out but process is still alive — it might just be slow
+        print(f"[DevServerManager] Server {run_id} not ready after {_READY_POLL_MAX_ATTEMPTS}s, but process alive — accepting")
+        return True, None
+
+    def _cleanup(self, run_id: str):
+        """Kill process, stop tunnel, remove from registry and DB."""
+        info = self._servers.get(run_id)
+        if not info:
+            return
+
+        # Kill process
+        proc = info.get("process")
+        if proc:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+
+        # Stop tunnel
+        self._stop_tunnel(run_id)
+
+        # Clear proxy if this was the active target
+        if _proxy_state["target_run_id"] == run_id:
+            _proxy_state["target_port"] = None
+            _proxy_state["target_run_id"] = None
+
+        delete_dev_server_from_db(run_id)
+        self._servers.pop(run_id, None)
+
+    # --- Tunnel wrappers ---
+
+    def _start_tunnel(self, port: int, run_id: str) -> Optional[str]:
+        if not NGROK_AVAILABLE:
+            print("[DevServerManager] pyngrok not installed — tunnel unavailable")
+            return None
+        try:
+            tun = ngrok.connect(port, "http")
+            self._tunnels[run_id] = tun
+            print(f"[DevServerManager] Tunnel for port {port}: {tun.public_url}")
+            return tun.public_url
+        except Exception as e:
+            print(f"[DevServerManager] Tunnel failed: {e}")
+            return None
+
+    def _stop_tunnel(self, run_id: str):
+        tun = self._tunnels.pop(run_id, None)
+        if tun:
+            try:
+                ngrok.disconnect(tun.public_url)
+                print(f"[DevServerManager] Tunnel stopped for {run_id}")
+            except Exception as e:
+                print(f"[DevServerManager] Tunnel stop failed: {e}")
+
+
+# Singleton instance — used by routes
+manager = DevServerManager()
