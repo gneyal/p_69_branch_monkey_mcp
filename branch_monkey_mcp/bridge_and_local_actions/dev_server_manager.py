@@ -36,11 +36,15 @@ from .worktree import find_worktree_path
 def _reset_signals():
     """Reset signal handlers for child processes.
 
-    Python/uvicorn sets SIGPIPE to SIG_IGN which causes Node.js to crash
-    during PlatformInit (assertion failure in uv_loop_init).
+    Python/uvicorn modifies signal dispositions (SIGPIPE→SIG_IGN, custom
+    SIGCHLD handler, etc.) which causes Node.js/libuv to crash during
+    PlatformInit with assertion failures in uv_loop_init or uv_signal_init.
+    Reset ALL catchable signals to default before exec-ing Node.
     """
     os.setsid()
-    for sig in (signal.SIGPIPE, signal.SIGINT, signal.SIGTERM):
+    for sig in signal.valid_signals():
+        if sig in (signal.SIGKILL, signal.SIGSTOP):
+            continue  # cannot be caught/reset
         try:
             signal.signal(sig, signal.SIG_DFL)
         except (OSError, ValueError):
@@ -323,6 +327,7 @@ class DevServerManager:
                     capture_output=True,
                     timeout=180,
                     check=True,
+                    preexec_fn=_reset_signals,
                 )
             except subprocess.TimeoutExpired:
                 raise HTTPException(status_code=500, detail="npm install timed out")
