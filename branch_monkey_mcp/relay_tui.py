@@ -17,7 +17,7 @@ from typing import Optional, Callable, Dict, Any
 # Reduce ESC key delay (default 1000ms is way too long)
 os.environ.setdefault("ESCDELAY", "25")
 
-from .logo import LOGO, LOGO_WIDTH, LOGO_HEIGHT, get_animated_attrs
+from .logo import LOGO, LOGO_WIDTH, LOGO_HEIGHT, GRADIENT_COLORS, get_animated_attrs
 
 
 class LogCapture:
@@ -155,18 +155,18 @@ class RelayTUI:
                 curses.init_pair(5, 8, -1)  # bright black (gray)
             except curses.error:
                 curses.init_pair(5, curses.COLOR_WHITE, -1)
-            # Logo glow: 3 levels (dim → normal → bright)
-            # pair 6 = dim green, pair 7 = green, pair 8 = bright white-green
-            try:
-                curses.init_pair(6, 22, -1)    # dim/dark green
-            except curses.error:
-                curses.init_pair(6, curses.COLOR_GREEN, -1)
-            curses.init_pair(7, curses.COLOR_GREEN, -1)  # normal green
-            curses.init_pair(8, curses.COLOR_WHITE, -1)   # bright highlight
+            # Logo gradient: smooth indigo → white (8 levels, pairs 10–17)
+            for i, color_num in enumerate(GRADIENT_COLORS):
+                try:
+                    curses.init_pair(10 + i, color_num, -1)
+                except curses.error:
+                    # Fallback for limited-color terminals
+                    fb = curses.COLOR_BLUE if i < 3 else (curses.COLOR_CYAN if i < 6 else curses.COLOR_WHITE)
+                    curses.init_pair(10 + i, fb, -1)
 
         last_draw = 0.0
-        # Logo animates at a calm pace
-        ANIM_INTERVAL = 0.2  # 5 fps — gentle, not frantic
+        # Logo animates smoothly
+        ANIM_INTERVAL = 0.1  # 10 fps — smooth shimmer
 
         while self._running:
             now = time.monotonic()
@@ -291,9 +291,9 @@ class RelayTUI:
         bar_w = min(50, w - 4)
         y = 1
 
-        # Header — animated retro logo or compact fallback
+        # Header — animated logo or compact fallback
         ver = f"v{s['version']}" if s["version"] else ""
-        if h >= 30 and w >= LOGO_WIDTH + 6:
+        if w >= LOGO_WIDTH + 6:
             self._draw_animated_logo(stdscr, y, col)
             y += LOGO_HEIGHT
             subtitle = f"relay {ver}"
@@ -451,8 +451,9 @@ class RelayTUI:
         self._put(stdscr, footer_y, x + 4, "Quit", self._dim())
 
     def _draw_animated_logo(self, stdscr, y, col):
-        """Draw the logo with a subtle drifting glow."""
+        """Draw the logo with smooth shimmer animation."""
         h, w = stdscr.getmaxyx()
+        num_levels = len(GRADIENT_COLORS)
         for i, line in enumerate(LOGO):
             row_y = y + i
             if row_y >= h:
@@ -464,14 +465,13 @@ class RelayTUI:
                 screen_x = col + cx
                 if screen_x >= w - 1:
                     break
-                val = intensities[cx] if cx < len(intensities) else 0.5
-                # 3 levels: dim green, green, bright white-green
-                if val > 0.75:
-                    attr = curses.color_pair(8) | curses.A_BOLD  # bright
-                elif val > 0.45:
-                    attr = curses.color_pair(7)                   # normal green
-                else:
-                    attr = curses.color_pair(6)                   # dim
+                val = intensities[cx] if cx < len(intensities) else 0.3
+                # Map brightness to 8-level gradient (pairs 10–17)
+                level = int(val * (num_levels - 1))
+                level = max(0, min(num_levels - 1, level))
+                attr = curses.color_pair(10 + level)
+                if level >= num_levels - 2:
+                    attr |= curses.A_BOLD
                 try:
                     stdscr.addch(row_y, screen_x, ch, attr)
                 except curses.error:
