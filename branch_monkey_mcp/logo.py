@@ -45,10 +45,10 @@ LOGO_HEIGHT = len(LOGO)
 # 4 display rows × 6 wide — head at rows 0-1, body at rows 2-3
 # fmt: off
 PERSON = [
-    " ▄██▄ ",   # top of head (rounded)
-    " ▀██▀ ",   # bottom of head (rounded)
-    "  ██  ",   # body
-    "  ▀▀  ",   # body bottom (rounded)
+    " ▄████▄ ",   # top of head (wide for round look)
+    " ▀████▀ ",   # bottom of head
+    "   ██   ",   # narrow body
+    "   ▀▀   ",   # body bottom (rounded)
 ]
 # fmt: on
 PERSON_WIDTH = len(PERSON[0])
