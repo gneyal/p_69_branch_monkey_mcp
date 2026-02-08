@@ -39,19 +39,25 @@ for row in range(2):
 LOGO_WIDTH = max(len(line) for line in LOGO)
 LOGO_HEIGHT = len(LOGO)
 
-# ── Crew characters (3 Rothko persons from the frontend SVG logo) ──
+# ── Person icon (matches kompany brand logo) ──
 
-# Each person: rounded head (row 0) + narrow body (row 1)
-# Head colors match the SVG: red #b91c1c, amber #d97706, teal #0f766e
-CREW_PERSON = ["▄██▄", " ██ "]
-CREW_HEAD_COLORS = [160, 172, 36]   # 256-color: red, amber, teal
-CREW_BODY_COLOR = 249               # light gray
-CREW_GAP = 1
-CREW_WIDTH = len(CREW_PERSON[0]) * 3 + CREW_GAP * 2  # 14
-CREW_HEIGHT = 2
+# Single person: big rounded head + narrower rectangle body
+# 4 display rows × 6 wide — head at rows 0-1, body at rows 2-3
+# fmt: off
+PERSON = [
+    " ▄██▄ ",   # top of head (rounded)
+    " ▀██▀ ",   # bottom of head (rounded)
+    "  ██  ",   # body
+    "  ▀▀  ",   # body bottom (rounded)
+]
+# fmt: on
+PERSON_WIDTH = len(PERSON[0])
+PERSON_HEIGHT = len(PERSON)
+PERSON_BODY_COLOR = 240  # dim gray for body
 
-# Full logo width: crew + gap + text
-FULL_WIDTH = CREW_WIDTH + 2 + LOGO_WIDTH  # 51
+# Combined layout: person + gap + text (text centered at person rows 1-2)
+FULL_WIDTH = PERSON_WIDTH + 2 + LOGO_WIDTH
+FULL_HEIGHT = PERSON_HEIGHT
 
 # ── 256-color gradient for smooth animation ──
 
@@ -104,14 +110,6 @@ def get_animated_attrs(frame: int, width: int, row: int = 0) -> list:
         attrs.append(max(0.0, min(1.0, brightness)))
 
     return attrs
-
-
-def get_crew_pulse(frame: int, person_idx: int) -> float:
-    """Return 0.0–1.0 brightness for a crew head. Gentle staggered pulse."""
-    t = frame * 0.06
-    # Each person pulses at a slightly different phase
-    phase = person_idx * 1.2
-    return 0.55 + math.sin(t * 0.8 + phase) * 0.35
 
 
 if __name__ == "__main__":

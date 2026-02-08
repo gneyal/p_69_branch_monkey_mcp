@@ -19,8 +19,8 @@ os.environ.setdefault("ESCDELAY", "25")
 
 from .logo import (
     LOGO, LOGO_WIDTH, LOGO_HEIGHT, GRADIENT_COLORS, get_animated_attrs,
-    CREW_PERSON, CREW_HEAD_COLORS, CREW_BODY_COLOR, CREW_WIDTH, CREW_GAP,
-    FULL_WIDTH, get_crew_pulse,
+    PERSON, PERSON_WIDTH, PERSON_HEIGHT, PERSON_BODY_COLOR,
+    FULL_WIDTH, FULL_HEIGHT,
 )
 
 
@@ -166,24 +166,11 @@ class RelayTUI:
                 except curses.error:
                     fb = curses.COLOR_BLUE if i < 3 else (curses.COLOR_CYAN if i < 6 else curses.COLOR_WHITE)
                     curses.init_pair(10 + i, fb, -1)
-            # Crew head colors: red, amber, teal (pairs 20–22)
-            for i, color_num in enumerate(CREW_HEAD_COLORS):
-                try:
-                    curses.init_pair(20 + i, color_num, -1)
-                except curses.error:
-                    fb = [curses.COLOR_RED, curses.COLOR_YELLOW, curses.COLOR_CYAN][i]
-                    curses.init_pair(20 + i, fb, -1)
-            # Crew body color (pair 23)
+            # Person body color (pair 20)
             try:
-                curses.init_pair(23, CREW_BODY_COLOR, -1)
+                curses.init_pair(20, PERSON_BODY_COLOR, -1)
             except curses.error:
-                curses.init_pair(23, curses.COLOR_WHITE, -1)
-            # Dim crew head variants (pairs 24–26) for pulse animation
-            for i, color_num in enumerate([52, 130, 23]):  # dim red, dim amber, dim teal
-                try:
-                    curses.init_pair(24 + i, color_num, -1)
-                except curses.error:
-                    curses.init_pair(24 + i, 8, -1)
+                curses.init_pair(20, curses.COLOR_WHITE, -1)
 
         last_draw = 0.0
         # Logo animates smoothly
@@ -312,16 +299,16 @@ class RelayTUI:
         bar_w = min(50, w - 4)
         y = 1
 
-        # Header — crew + animated logo or compact fallback
+        # Header — person + animated logo or compact fallback
         ver = f"v{s['version']}" if s["version"] else ""
         if w >= FULL_WIDTH + 6:
-            # Draw crew on the left, text logo on the right
-            self._draw_crew(stdscr, y, col)
-            self._draw_animated_logo(stdscr, y, col + CREW_WIDTH + 2)
-            y += LOGO_HEIGHT
+            # Person on left, text logo centered vertically on right
+            self._draw_person(stdscr, y, col)
+            self._draw_animated_logo(stdscr, y + 1, col + PERSON_WIDTH + 2)
             subtitle = f"relay {ver}"
-            self._put(stdscr, y, col + CREW_WIDTH + 2 + LOGO_WIDTH - len(subtitle), subtitle, self._dim())
-            y += 1
+            text_x = col + PERSON_WIDTH + 2
+            self._put(stdscr, y + 3, text_x + LOGO_WIDTH - len(subtitle), subtitle, self._dim())
+            y += FULL_HEIGHT
             self._hline(stdscr, y, col, bar_w)
             y += 2
         elif w >= LOGO_WIDTH + 6:
@@ -482,38 +469,37 @@ class RelayTUI:
         self._put(stdscr, footer_y, x, "[Q]", self._cyan() | self._bold())
         self._put(stdscr, footer_y, x + 4, "Quit", self._dim())
 
-    def _draw_crew(self, stdscr, y, col):
-        """Draw the 3 Rothko crew persons with pulsing heads."""
+    def _draw_person(self, stdscr, y, col):
+        """Draw the brand person icon — shimmer head, dim body."""
         h, w = stdscr.getmaxyx()
-        person_w = len(CREW_PERSON[0])
+        num_levels = len(GRADIENT_COLORS)
 
-        for pidx in range(3):
-            px = col + pidx * (person_w + CREW_GAP)
-            pulse = get_crew_pulse(self._anim_frame, pidx)
-
-            for row_i, row_str in enumerate(CREW_PERSON):
-                ry = y + row_i
-                if ry >= h:
+        for row_i, row_str in enumerate(PERSON):
+            ry = y + row_i
+            if ry >= h:
+                break
+            is_head = row_i < 2
+            if is_head:
+                intensities = get_animated_attrs(self._anim_frame, len(row_str), row=row_i)
+            for cx, ch in enumerate(row_str):
+                if ch == " ":
+                    continue
+                sx = col + cx
+                if sx >= w - 1:
                     break
-                for cx, ch in enumerate(row_str):
-                    if ch == " ":
-                        continue
-                    sx = px + cx
-                    if sx >= w - 1:
-                        break
-                    if row_i == 0:
-                        # Head — pick bright or dim based on pulse
-                        if pulse > 0.5:
-                            attr = curses.color_pair(20 + pidx) | curses.A_BOLD
-                        else:
-                            attr = curses.color_pair(24 + pidx)
-                    else:
-                        # Body — steady gray
-                        attr = curses.color_pair(23)
-                    try:
-                        stdscr.addch(ry, sx, ch, attr)
-                    except curses.error:
-                        pass
+                if is_head:
+                    val = intensities[cx] if cx < len(intensities) else 0.3
+                    level = int(val * (num_levels - 1))
+                    level = max(0, min(num_levels - 1, level))
+                    attr = curses.color_pair(10 + level)
+                    if level >= num_levels - 2:
+                        attr |= curses.A_BOLD
+                else:
+                    attr = curses.color_pair(20)
+                try:
+                    stdscr.addch(ry, sx, ch, attr)
+                except curses.error:
+                    pass
 
     def _draw_animated_logo(self, stdscr, y, col):
         """Draw the logo with smooth shimmer animation."""
