@@ -291,11 +291,15 @@ class DevServerManager:
         """Spawn the subprocess. Returns (process, command_str)."""
         from fastapi import HTTPException
 
+        # Prefer frontend/ subdirectory if it exists (SvelteKit projects)
+        frontend_path = Path(cwd) / "frontend"
+        run_cwd = str(frontend_path) if frontend_path.exists() else str(cwd)
+
         if dev_script:
             command = dev_script.replace("{port}", str(port))
-            print(f"[DevServerManager] Custom script for {run_id}: {command}")
+            print(f"[DevServerManager] Custom script for {run_id}: {command} (cwd: {run_cwd})")
             process = subprocess.Popen(
-                command, shell=True, cwd=str(cwd), **_SPAWN_DEFAULTS,
+                command, shell=True, cwd=run_cwd, **_SPAWN_DEFAULTS,
             )
             return process, command
 
