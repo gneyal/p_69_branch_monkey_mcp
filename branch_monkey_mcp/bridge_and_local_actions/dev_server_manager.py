@@ -126,7 +126,7 @@ class DevServerManager:
         port = self._find_available_port(BASE_DEV_PORT + task_number)
 
         # --- Spawn the process -----------------------------------------------
-        process, command = self._spawn(dev_script, port, worktree_path, run_id, task_number, working_dir)
+        process, command = self._spawn(dev_script, port, worktree_path, run_id, task_number, working_dir, tunnel)
 
         # --- Register immediately (before readiness check) -------------------
         self._servers[run_id] = {
@@ -298,7 +298,7 @@ class DevServerManager:
             if port > base + 100:
                 raise RuntimeError("No available port in range")
 
-    def _spawn(self, dev_script: Optional[str], port: int, cwd: str, run_id: str, task_number: int, working_dir: Optional[str] = None):
+    def _spawn(self, dev_script: Optional[str], port: int, cwd: str, run_id: str, task_number: int, working_dir: Optional[str] = None, tunnel: bool = False):
         """Spawn the subprocess. Returns (process, command_str)."""
         from fastapi import HTTPException
 
@@ -309,11 +309,19 @@ class DevServerManager:
             frontend_path = Path(cwd) / "frontend"
             run_cwd = str(frontend_path) if frontend_path.exists() else str(cwd)
 
+        # When tunneling (ngrok), tell Vite to accept requests from any host
+        env = {**os.environ}
+        if tunnel:
+            env["DANGEROUSLY_DISABLE_HOST_CHECK"] = "true"  # CRA
+            env["WATCHPACK_POLLING"] = "true"
+
+        spawn_kwargs = {**_SPAWN_DEFAULTS, "env": env} if tunnel else _SPAWN_DEFAULTS
+
         if dev_script:
             command = dev_script.replace("{port}", str(port))
             log.info(f" Custom script for {run_id}: {command} (cwd: {run_cwd})")
             process = subprocess.Popen(
-                command, shell=True, cwd=run_cwd, **_SPAWN_DEFAULTS,
+                command, shell=True, cwd=run_cwd, **spawn_kwargs,
             )
             return process, command
 
@@ -341,10 +349,12 @@ class DevServerManager:
             except subprocess.CalledProcessError as e:
                 raise HTTPException(status_code=500, detail=f"npm install failed: {e.stderr}")
 
-        cmd = f"npm run dev -- --port {port}"
-        log.info(f" Starting default server for {run_id} on port {port} (cwd: {run_cwd})")
+        # When tunneling, add --host and allow all hosts for external access
+        tunnel_flags = " --host --allowedHosts all" if tunnel else ""
+        cmd = f"npm run dev -- --port {port}{tunnel_flags}"
+        log.info(f" Starting default server for {run_id} on port {port} (cwd: {run_cwd}) tunnel={tunnel}")
         process = subprocess.Popen(
-            cmd, shell=True, cwd=run_cwd, **_SPAWN_DEFAULTS,
+            cmd, shell=True, cwd=run_cwd, **spawn_kwargs,
         )
         log.info(f" Spawned PID={process.pid} PGID={os.getpgid(process.pid)}")
         return process, cmd
