@@ -14,7 +14,7 @@ from typing import Optional, List
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from ..config import get_home_directory
+from ..config import get_home_directory, find_dev_dir
 
 router = APIRouter()
 
@@ -187,29 +187,13 @@ def scan_project(request: ScanProjectRequest):
             pass
 
     # Detect framework and dev server from package.json
-    # Check root first, then common subdirectories (frontend/, app/, client/)
-    app_dir = None
-    package_json = None
-    for subdir in ["", "frontend", "app", "client"]:
-        candidate = os.path.join(path, subdir, "package.json") if subdir else os.path.join(path, "package.json")
-        if os.path.exists(candidate):
-            try:
-                with open(candidate, 'r') as f:
-                    pj = json.load(f)
-                    scripts = pj.get("scripts", {})
-                    # Use this package.json if it has dev scripts (prefer subdir with scripts over root without)
-                    if scripts.get("dev") or scripts.get("start") or not package_json:
-                        package_json = pj
-                        app_dir = subdir or None
-                        if scripts.get("dev") or scripts.get("start"):
-                            break  # Found one with dev scripts, use it
-            except Exception:
-                pass
+    dev_dir, package_json = find_dev_dir(path)
 
     if package_json:
         result["raw_config"]["package_json"] = package_json
-        if app_dir:
-            result["working_dir"] = app_dir
+        # Store relative working_dir if dev scripts live in a subdirectory
+        if os.path.abspath(dev_dir) != os.path.abspath(path):
+            result["working_dir"] = os.path.relpath(dev_dir, path)
 
         # Detect framework from dependencies
         deps = {

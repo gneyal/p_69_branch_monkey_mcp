@@ -33,6 +33,7 @@ from .database import (
     load_dev_servers_from_db,
     _is_port_in_use,
 )
+from .config import find_dev_dir
 from .dev_proxy import start_dev_proxy, set_proxy_target, get_proxy_status, _proxy_state
 from .worktree import find_worktree_path
 
@@ -297,12 +298,11 @@ class DevServerManager:
         """Spawn the subprocess. Returns (process, command_str)."""
         from fastapi import HTTPException
 
-        # Resolve run directory: explicit working_dir > auto-detect frontend/ > cwd
+        # Resolve run directory: explicit working_dir > scan for package.json with dev scripts > cwd
         if working_dir:
             run_cwd = str(Path(cwd) / working_dir)
         else:
-            frontend_path = Path(cwd) / "frontend"
-            run_cwd = str(frontend_path) if frontend_path.exists() else str(cwd)
+            run_cwd, _ = find_dev_dir(cwd)
 
         # When tunneling (ngrok), tell Vite to accept requests from any host
         env = {**os.environ}

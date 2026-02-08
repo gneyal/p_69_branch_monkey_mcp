@@ -8,9 +8,11 @@ This module manages:
 - App configuration caching
 """
 
+import json
 import os
 from datetime import datetime
-from typing import Optional
+from pathlib import Path
+from typing import Optional, Tuple
 
 import httpx
 
@@ -55,6 +57,51 @@ def get_default_working_dir() -> str:
 # Initialize from environment on startup
 if _home_directory:
     print(f"[Server] Default working directory: {_home_directory}")
+
+
+# =============================================================================
+# Project Detection
+# =============================================================================
+
+# Subdirectories to check for package.json (in priority order)
+_APP_SUBDIRS = ["", "frontend", "app", "client", "web", "packages/web", "packages/app"]
+
+
+def find_dev_dir(project_path: str) -> Tuple[str, Optional[dict]]:
+    """Find the subdirectory containing dev scripts in a project.
+
+    Scans project_path and common subdirectories for a package.json with
+    a "dev" or "start" script. Returns the absolute path to run in and
+    the parsed package.json (or None).
+
+    Returns:
+        (run_dir, package_json) — run_dir is always a valid absolute path.
+    """
+    best_dir = project_path
+    best_pj = None
+
+    for subdir in _APP_SUBDIRS:
+        candidate = Path(project_path) / subdir / "package.json" if subdir else Path(project_path) / "package.json"
+        if not candidate.exists():
+            continue
+        try:
+            pj = json.loads(candidate.read_text())
+        except Exception:
+            continue
+
+        scripts = pj.get("scripts", {})
+        has_dev = bool(scripts.get("dev") or scripts.get("start"))
+
+        if has_dev:
+            best_dir = str(candidate.parent)
+            best_pj = pj
+            break  # First match with dev scripts wins
+        elif best_pj is None:
+            # Keep as fallback if nothing better found
+            best_dir = str(candidate.parent)
+            best_pj = pj
+
+    return best_dir, best_pj
 
 
 # =============================================================================
