@@ -105,7 +105,10 @@ class DevServerManager:
 
         # --- Already running? ------------------------------------------------
         if run_id in self._servers:
-            return self._handle_existing(run_id, tunnel)
+            result = self._handle_existing(run_id, tunnel)
+            if result is not None:
+                return result
+            # Stale entry was cleaned up — fall through to start fresh
 
         # --- Resolve worktree ------------------------------------------------
         worktree_path = self._resolve_worktree(task_number, worktree_path, project_path)
@@ -247,13 +250,10 @@ class DevServerManager:
                 "status": "already_running",
             }
 
-        # Process died — clean up and let caller retry
-        print(f"[DevServerManager] Stale entry for {run_id} (port {info['port']} dead)")
+        # Process died — clean up stale entry and return None so start() retries
+        print(f"[DevServerManager] Stale entry for {run_id} (port {info['port']} dead), cleaning up")
         self._cleanup(run_id)
-        # Return None so the caller's "already running" check falls through
-        # Actually, since we deleted, re-raise so the route can call start again
-        from fastapi import HTTPException
-        raise HTTPException(status_code=410, detail="Server died, please retry")
+        return None
 
     def _resolve_worktree(self, task_number: int, worktree_path: Optional[str], project_path: Optional[str]) -> str:
         from fastapi import HTTPException
