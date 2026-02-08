@@ -126,7 +126,7 @@ async def get_app_config() -> dict:
 
     # Try to fetch from cloud
     relay_status = get_relay_status()
-    cloud_url = relay_status.get("cloud_url") or "https://p-63-branch-monkey.pages.dev"
+    cloud_url = relay_status.get("cloud_url") or "https://kompany.dev"
 
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:

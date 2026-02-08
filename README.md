@@ -1,6 +1,6 @@
 # Branch Monkey MCP Server
 
-MCP (Model Context Protocol) server for [Branch Monkey](https://p-63-branch-monkey.pages.dev) - connecting Claude Code to your task management and team collaboration platform.
+MCP (Model Context Protocol) server for [Branch Monkey](https://kompany.dev) - connecting Claude Code to your task management and team collaboration platform.
 
 ## Quick Start
 
@@ -13,7 +13,7 @@ Add this to your project's `.mcp.json`:
       "command": "uvx",
       "args": ["--from", "git+https://github.com/gneyal/p_69_branch_monkey_mcp.git", "branch-monkey-mcp"],
       "env": {
-        "BRANCH_MONKEY_API_URL": "https://p-63-branch-monkey.pages.dev"
+        "BRANCH_MONKEY_API_URL": "https://kompany.dev"
       }
     }
   }
@@ -138,7 +138,7 @@ If you're having trouble connecting:
 1. **Use `monkey_login`** - Forces re-authentication via browser
 2. **Check the token file** - Stored at `~/.branch-monkey/token.json`
 3. **Clear and retry** - Use `monkey_logout`, then restart Claude Code
-4. **Check network** - Ensure you can access https://p-63-branch-monkey.pages.dev
+4. **Check network** - Ensure you can access https://kompany.dev
 
 ### First-Time Setup
 

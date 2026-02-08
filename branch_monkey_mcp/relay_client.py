@@ -67,7 +67,7 @@ TOKEN_FILE = CONFIG_DIR / "relay_token.json"
 MACHINE_ID_FILE = CONFIG_DIR / "machine_id"
 
 # Cloud API URL - fallback if /api/config fetch fails
-FALLBACK_CLOUD_URL = "https://p-63-branch-monkey.pages.dev"
+FALLBACK_CLOUD_URL = "https://kompany.dev"
 
 
 def fetch_cloud_url_from_config(fallback_url: str = FALLBACK_CLOUD_URL) -> str:

@@ -294,7 +294,7 @@
                 </div>
                 <div class="text-left">
                   <div class="font-semibold text-lg" x-text="appName + ' Cloud'"></div>
-                  <div class="text-xs text-apple-secondary" x-text="appDomain || cloudUrl?.replace('https://', '') || 'p-63-branch-monkey.pages.dev'"></div>
+                  <div class="text-xs text-apple-secondary" x-text="appDomain || cloudUrl?.replace('https://', '') || 'kompany.dev'"></div>
                 </div>
               </div>
               <div class="flex items-center justify-center gap-2 mt-3">
@@ -1643,7 +1643,7 @@
             // Also get cloud URL for display
             const relayRes = await fetch('/api/relay/status');
             const relayData = await relayRes.json();
-            this.cloudUrl = relayData.cloud_url || 'https://p-63-branch-monkey.pages.dev';
+            this.cloudUrl = relayData.cloud_url || 'https://kompany.dev';
 
             // Fetch config from local server (avoids CORS issues)
             const res = await fetch('/api/config');
@@ -1784,7 +1784,7 @@
         async checkCloudStatus() {
           try {
             this.cloudReachable = null;
-            const cloudUrl = this.cloudUrl || 'https://p-63-branch-monkey.pages.dev';
+            const cloudUrl = this.cloudUrl || 'https://kompany.dev';
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 5000);
             const res = await fetch(`${cloudUrl}/api/health`, {

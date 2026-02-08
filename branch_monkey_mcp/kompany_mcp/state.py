@@ -45,7 +45,7 @@ API_KEY: Optional[str] = None
 ORG_ID: Optional[str] = None
 
 # Fallback URL if config fetch fails
-FALLBACK_API_URL = "https://p-63-branch-monkey.pages.dev"
+FALLBACK_API_URL = "https://kompany.dev"
 
 
 def _fetch_api_url() -> str:

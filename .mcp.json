@@ -8,7 +8,7 @@
         "branch-monkey-mcp"
       ],
       "env": {
-        "BRANCH_MONKEY_API_URL": "https://p-63-branch-monkey.pages.dev"
+        "BRANCH_MONKEY_API_URL": "https://kompany.dev"
       }
     }
   }

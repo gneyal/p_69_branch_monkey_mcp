@@ -40,7 +40,7 @@ branch-monkey-proxy = "branch_monkey_mcp.dev_proxy:main"
 
 [project.urls]
 Homepage = "https://github.com/gneyal/branch-monkey-mcp"
-Documentation = "https://p-63-branch-monkey.pages.dev/install"
+Documentation = "https://kompany.dev/install"
 
 [tool.hatch.build.targets.wheel]
 packages = ["branch_monkey_mcp"]

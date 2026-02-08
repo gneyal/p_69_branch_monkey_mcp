@@ -12,7 +12,7 @@ Usage:
                     "command": "uvx",
                     "args": ["--from", "git+https://github.com/gneyal/p_69_branch_monkey_mcp.git", "branch-monkey-mcp"],
                     "env": {
-                        "BRANCH_MONKEY_API_URL": "https://p-63-branch-monkey.pages.dev"
+                        "BRANCH_MONKEY_API_URL": "https://kompany.dev"
                     }
                 }
             }
