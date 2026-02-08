@@ -33,22 +33,18 @@ from .dev_proxy import start_dev_proxy, set_proxy_target, get_proxy_status, _pro
 from .worktree import find_worktree_path
 
 
-def _reset_signals():
-    """Reset signal handlers for child processes.
+def _make_subprocess_env():
+    """Build a clean environment for Node.js subprocesses.
 
-    Python/uvicorn modifies signal dispositions (SIGPIPE→SIG_IGN, custom
-    SIGCHLD handler, etc.) which causes Node.js/libuv to crash during
-    PlatformInit with assertion failures in uv_loop_init or uv_signal_init.
-    Reset ALL catchable signals to default before exec-ing Node.
+    Inherit essential env vars but avoid anything that could interfere
+    with Node.js/libuv initialization.
     """
-    os.setsid()
-    for sig in signal.valid_signals():
-        if sig in (signal.SIGKILL, signal.SIGSTOP):
-            continue  # cannot be caught/reset
-        try:
-            signal.signal(sig, signal.SIG_DFL)
-        except (OSError, ValueError):
-            pass
+    env = dict(os.environ)
+    # Remove Python-specific vars that might confuse Node
+    for key in list(env):
+        if key.startswith(("PYTHON", "VIRTUAL_ENV", "CONDA")):
+            del env[key]
+    return env
 
 
 # Optional ngrok support
@@ -305,7 +301,8 @@ class DevServerManager:
                 cwd=str(cwd),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                preexec_fn=_reset_signals,
+                start_new_session=True,
+                env=_make_subprocess_env(),
             )
             return process, command
 
@@ -327,7 +324,8 @@ class DevServerManager:
                     capture_output=True,
                     timeout=180,
                     check=True,
-                    preexec_fn=_reset_signals,
+                    start_new_session=True,
+                    env=_make_subprocess_env(),
                 )
             except subprocess.TimeoutExpired:
                 raise HTTPException(status_code=500, detail="npm install timed out")
@@ -341,7 +339,8 @@ class DevServerManager:
             cwd=str(frontend_path),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            preexec_fn=_reset_signals,
+            start_new_session=True,
+            env=_make_subprocess_env(),
         )
         return process, " ".join(cmd)
 
