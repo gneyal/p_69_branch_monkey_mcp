@@ -187,63 +187,78 @@ def scan_project(request: ScanProjectRequest):
             pass
 
     # Detect framework and dev server from package.json
-    package_json_path = os.path.join(path, "package.json")
-    if os.path.exists(package_json_path):
-        try:
-            with open(package_json_path, 'r') as f:
-                package_json = json.load(f)
-                result["raw_config"]["package_json"] = package_json
+    # Check root first, then common subdirectories (frontend/, app/, client/)
+    app_dir = None
+    package_json = None
+    for subdir in ["", "frontend", "app", "client"]:
+        candidate = os.path.join(path, subdir, "package.json") if subdir else os.path.join(path, "package.json")
+        if os.path.exists(candidate):
+            try:
+                with open(candidate, 'r') as f:
+                    pj = json.load(f)
+                    scripts = pj.get("scripts", {})
+                    # Use this package.json if it has dev scripts (prefer subdir with scripts over root without)
+                    if scripts.get("dev") or scripts.get("start") or not package_json:
+                        package_json = pj
+                        app_dir = subdir or None
+                        if scripts.get("dev") or scripts.get("start"):
+                            break  # Found one with dev scripts, use it
+            except Exception:
+                pass
 
-                # Detect framework from dependencies
-                deps = {
-                    **package_json.get("dependencies", {}),
-                    **package_json.get("devDependencies", {})
-                }
+    if package_json:
+        result["raw_config"]["package_json"] = package_json
+        if app_dir:
+            result["working_dir"] = app_dir
 
-                if "@sveltejs/kit" in deps:
-                    result["framework"] = "SvelteKit"
-                elif "next" in deps:
-                    result["framework"] = "Next.js"
-                elif "nuxt" in deps:
-                    result["framework"] = "Nuxt"
-                elif "astro" in deps:
-                    result["framework"] = "Astro"
-                elif "gatsby" in deps:
-                    result["framework"] = "Gatsby"
-                elif "svelte" in deps:
-                    result["framework"] = "Svelte"
-                elif "react" in deps:
-                    result["framework"] = "React"
-                elif "vue" in deps:
-                    result["framework"] = "Vue"
-                elif "express" in deps:
-                    result["framework"] = "Express"
-                elif "fastify" in deps:
-                    result["framework"] = "Fastify"
+        # Detect framework from dependencies
+        deps = {
+            **package_json.get("dependencies", {}),
+            **package_json.get("devDependencies", {})
+        }
 
-                # Detect dev server
-                scripts = package_json.get("scripts", {})
-                dev_command = scripts.get("dev") or scripts.get("start")
-                if dev_command:
-                    # Try to detect port from command
-                    port_match = re.search(r'(?:--port|PORT=|:)(\d{4,5})', dev_command)
-                    port = int(port_match.group(1)) if port_match else 3000
+        if "@sveltejs/kit" in deps:
+            result["framework"] = "SvelteKit"
+        elif "next" in deps:
+            result["framework"] = "Next.js"
+        elif "nuxt" in deps:
+            result["framework"] = "Nuxt"
+        elif "astro" in deps:
+            result["framework"] = "Astro"
+        elif "gatsby" in deps:
+            result["framework"] = "Gatsby"
+        elif "svelte" in deps:
+            result["framework"] = "Svelte"
+        elif "react" in deps:
+            result["framework"] = "React"
+        elif "vue" in deps:
+            result["framework"] = "Vue"
+        elif "express" in deps:
+            result["framework"] = "Express"
+        elif "fastify" in deps:
+            result["framework"] = "Fastify"
 
-                    # Adjust default port based on framework
-                    if not port_match:
-                        if result["framework"] == "SvelteKit":
-                            port = 5173
-                        elif result["framework"] in ["Next.js", "Nuxt", "Gatsby"]:
-                            port = 3000
-                        elif result["framework"] == "Astro":
-                            port = 4321
+        # Detect dev server
+        scripts = package_json.get("scripts", {})
+        dev_command = scripts.get("dev") or scripts.get("start")
+        if dev_command:
+            # Try to detect port from command
+            port_match = re.search(r'(?:--port|PORT=|:)(\d{4,5})', dev_command)
+            port = int(port_match.group(1)) if port_match else 3000
 
-                    result["dev_server"] = {
-                        "command": "dev" if "dev" in scripts else "start",
-                        "port": port
-                    }
-        except Exception:
-            pass
+            # Adjust default port based on framework
+            if not port_match:
+                if result["framework"] == "SvelteKit":
+                    port = 5173
+                elif result["framework"] in ["Next.js", "Nuxt", "Gatsby"]:
+                    port = 3000
+                elif result["framework"] == "Astro":
+                    port = 4321
+
+            result["dev_server"] = {
+                "command": "dev" if "dev" in scripts else "start",
+                "port": port
+            }
 
     # Detect deployment platform from config files
     deployment_configs = [

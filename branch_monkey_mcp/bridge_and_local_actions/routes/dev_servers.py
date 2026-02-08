@@ -18,6 +18,7 @@ async def start_dev_server(request: DevServerRequest):
         run_id=run_id,
         task_id=request.task_id,
         dev_script=request.dev_script,
+        working_dir=request.working_dir,
         tunnel=request.tunnel or False,
         worktree_path=request.worktree_path,
         project_path=request.project_path,

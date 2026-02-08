@@ -67,6 +67,7 @@ class DevServerRequest(BaseModel):
     task_number: int
     run_id: Optional[str] = None
     dev_script: Optional[str] = None
+    working_dir: Optional[str] = None  # Subdirectory to run dev script in (e.g. "frontend")
     tunnel: Optional[bool] = False
     worktree_path: Optional[str] = None
     project_path: Optional[str] = None
@@ -92,6 +93,7 @@ class DevServerManager:
         run_id: str,
         task_id: Optional[str] = None,
         dev_script: Optional[str] = None,
+        working_dir: Optional[str] = None,
         tunnel: bool = False,
         worktree_path: Optional[str] = None,
         project_path: Optional[str] = None,
@@ -112,7 +114,7 @@ class DevServerManager:
         port = self._find_available_port(BASE_DEV_PORT + task_number)
 
         # --- Spawn the process -----------------------------------------------
-        process, command = self._spawn(dev_script, port, worktree_path, run_id, task_number)
+        process, command = self._spawn(dev_script, port, worktree_path, run_id, task_number, working_dir)
 
         # --- Register immediately (before readiness check) -------------------
         self._servers[run_id] = {
@@ -287,13 +289,16 @@ class DevServerManager:
             if port > base + 100:
                 raise RuntimeError("No available port in range")
 
-    def _spawn(self, dev_script: Optional[str], port: int, cwd: str, run_id: str, task_number: int):
+    def _spawn(self, dev_script: Optional[str], port: int, cwd: str, run_id: str, task_number: int, working_dir: Optional[str] = None):
         """Spawn the subprocess. Returns (process, command_str)."""
         from fastapi import HTTPException
 
-        # Prefer frontend/ subdirectory if it exists (SvelteKit projects)
-        frontend_path = Path(cwd) / "frontend"
-        run_cwd = str(frontend_path) if frontend_path.exists() else str(cwd)
+        # Resolve run directory: explicit working_dir > auto-detect frontend/ > cwd
+        if working_dir:
+            run_cwd = str(Path(cwd) / working_dir)
+        else:
+            frontend_path = Path(cwd) / "frontend"
+            run_cwd = str(frontend_path) if frontend_path.exists() else str(cwd)
 
         if dev_script:
             command = dev_script.replace("{port}", str(port))
@@ -303,22 +308,21 @@ class DevServerManager:
             )
             return process, command
 
-        # Default: npm run dev in frontend/
-        frontend_path = Path(cwd) / "frontend"
-        if not frontend_path.exists():
+        # Default: npm run dev
+        if not Path(run_cwd).exists():
             raise HTTPException(
                 status_code=404,
-                detail="No frontend directory in worktree. Configure a dev script in project settings.",
+                detail=f"Working directory not found: {run_cwd}. Configure working_dir in project settings.",
             )
 
-        node_modules = frontend_path / "node_modules"
+        node_modules = Path(run_cwd) / "node_modules"
         if not node_modules.exists():
             print(f"[DevServerManager] Installing deps for task {task_number}...")
             try:
                 subprocess.run(
                     "npm install",
                     shell=True,
-                    cwd=str(frontend_path),
+                    cwd=run_cwd,
                     timeout=180,
                     check=True,
                     **_SPAWN_DEFAULTS,
@@ -329,9 +333,9 @@ class DevServerManager:
                 raise HTTPException(status_code=500, detail=f"npm install failed: {e.stderr}")
 
         cmd = f"npm run dev -- --port {port}"
-        print(f"[DevServerManager] Starting default server for {run_id} on port {port}")
+        print(f"[DevServerManager] Starting default server for {run_id} on port {port} (cwd: {run_cwd})")
         process = subprocess.Popen(
-            cmd, shell=True, cwd=str(frontend_path), **_SPAWN_DEFAULTS,
+            cmd, shell=True, cwd=run_cwd, **_SPAWN_DEFAULTS,
         )
         return process, cmd
 
