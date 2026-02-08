@@ -347,8 +347,11 @@ class DevServerManager:
 
         spawn_kwargs = {**_SPAWN_DEFAULTS, "env": env} if tunnel else _SPAWN_DEFAULTS
 
+        # When tunneling, add --host and allow all hosts for external access
+        tunnel_flags = " --host --allowedHosts all" if tunnel else ""
+
         if dev_script:
-            command = dev_script.replace("{port}", str(port))
+            command = dev_script.replace("{port}", str(port)) + tunnel_flags
             _log(f" Custom script for {run_id}: {command} (cwd: {run_cwd})")
             process = subprocess.Popen(
                 command, shell=True, cwd=run_cwd, **spawn_kwargs,
@@ -356,8 +359,6 @@ class DevServerManager:
             return process, command
 
         # Default: npm run dev
-        # When tunneling, add --host and allow all hosts for external access
-        tunnel_flags = " --host --allowedHosts all" if tunnel else ""
         cmd = f"npm run dev -- --port {port}{tunnel_flags}"
         _log(f" Starting default server for {run_id} on port {port} (cwd: {run_cwd}) tunnel={tunnel}")
         process = subprocess.Popen(
