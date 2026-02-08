@@ -345,7 +345,8 @@ class DevServerManager:
             env["DANGEROUSLY_DISABLE_HOST_CHECK"] = "true"  # CRA
             env["WATCHPACK_POLLING"] = "true"
             # Vite 6.3+ reads this env var to allow tunnel hostnames
-            env["__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS"] = "ngrok-free.dev,ngrok.dev,ngrok.io,loca.lt,trycloudflare.com"
+            # Leading dot enables wildcard suffix matching (*.ngrok-free.dev)
+            env["__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS"] = ".ngrok-free.dev"
 
         spawn_kwargs = {**_SPAWN_DEFAULTS, "env": env} if tunnel else _SPAWN_DEFAULTS
 
