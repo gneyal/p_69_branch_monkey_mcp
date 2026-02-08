@@ -41,21 +41,26 @@ LOGO_HEIGHT = len(LOGO)
 
 # ── Person icon (matches kompany brand logo) ──
 
-# Single person: big rounded head + narrower rectangle body
-# 4 display rows × 6 wide — head at rows 0-1, body at rows 2-3
+# Single person: proper circle head + narrow body
+# 5-row circle head encodes a 12×10 virtual-pixel circle:
+#   widths 4→8→10→10→10→10→8→4 give smooth curvature
 # fmt: off
 PERSON = [
-    " ▄████▄ ",   # top of head (wide for round look)
-    " ▀████▀ ",   # bottom of head
-    "   ██   ",   # narrow body
-    "   ▀▀   ",   # body bottom (rounded)
+    "  ▄▄████▄▄  ",   # top of head
+    " ▄████████▄ ",   # head upper
+    " ██████████ ",   # head middle (widest)
+    " ▀████████▀ ",   # head lower
+    "  ▀▀████▀▀  ",   # bottom of head
+    "     ██     ",   # body
+    "     ▀▀     ",   # body bottom
 ]
 # fmt: on
 PERSON_WIDTH = len(PERSON[0])
 PERSON_HEIGHT = len(PERSON)
+PERSON_HEAD_ROWS = 5
 PERSON_BODY_COLOR = 240  # dim gray for body
 
-# Combined layout: person + gap + text (text centered at person rows 1-2)
+# Combined layout: person + gap + text (text at head middle rows 2-3)
 FULL_WIDTH = PERSON_WIDTH + 2 + LOGO_WIDTH
 FULL_HEIGHT = PERSON_HEIGHT
 

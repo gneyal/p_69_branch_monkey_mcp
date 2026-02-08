@@ -19,7 +19,7 @@ os.environ.setdefault("ESCDELAY", "25")
 
 from .logo import (
     LOGO, LOGO_WIDTH, LOGO_HEIGHT, GRADIENT_COLORS, get_animated_attrs,
-    PERSON, PERSON_WIDTH, PERSON_HEIGHT, PERSON_BODY_COLOR,
+    PERSON, PERSON_WIDTH, PERSON_HEIGHT, PERSON_HEAD_ROWS, PERSON_BODY_COLOR,
     FULL_WIDTH, FULL_HEIGHT,
 )
 
@@ -302,12 +302,12 @@ class RelayTUI:
         # Header — person + animated logo or compact fallback
         ver = f"v{s['version']}" if s["version"] else ""
         if w >= FULL_WIDTH + 6:
-            # Person on left, text logo centered vertically on right
+            # Person on left, text logo at head middle on right
             self._draw_person(stdscr, y, col)
-            self._draw_animated_logo(stdscr, y + 1, col + PERSON_WIDTH + 2)
+            self._draw_animated_logo(stdscr, y + 2, col + PERSON_WIDTH + 2)
             subtitle = f"relay {ver}"
             text_x = col + PERSON_WIDTH + 2
-            self._put(stdscr, y + 3, text_x + LOGO_WIDTH - len(subtitle), subtitle, self._dim())
+            self._put(stdscr, y + FULL_HEIGHT - 1, text_x + LOGO_WIDTH - len(subtitle), subtitle, self._dim())
             y += FULL_HEIGHT
             self._hline(stdscr, y, col, bar_w)
             y += 2
@@ -478,7 +478,7 @@ class RelayTUI:
             ry = y + row_i
             if ry >= h:
                 break
-            is_head = row_i < 2
+            is_head = row_i < PERSON_HEAD_ROWS
             if is_head:
                 intensities = get_animated_attrs(self._anim_frame, len(row_str), row=row_i)
             for cx, ch in enumerate(row_str):
