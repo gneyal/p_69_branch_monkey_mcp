@@ -185,6 +185,16 @@ class DevServerManager:
 
         for run_id, info in self._servers.items():
             if not _is_port_in_use(info["port"]):
+                # Don't prune servers still in startup grace period (30s)
+                started = info.get("started_at")
+                if started:
+                    try:
+                        age = (datetime.now() - datetime.fromisoformat(started)).total_seconds()
+                        if age < 30:
+                            _log(f" Server {run_id} port not ready yet ({age:.0f}s old), skipping prune")
+                            continue
+                    except Exception:
+                        pass
                 dead.append(run_id)
                 continue
 
