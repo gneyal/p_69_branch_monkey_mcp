@@ -71,14 +71,15 @@ def find_dev_dir(project_path: str) -> Tuple[str, Optional[dict]]:
     """Find the subdirectory containing dev scripts in a project.
 
     Scans project_path and common subdirectories for a package.json with
-    a "dev" or "start" script. Returns the absolute path to run in and
-    the parsed package.json (or None).
+    a "dev" script. Prioritises "dev" over "start"-only matches so that
+    `npm run dev` works in the returned directory.
 
     Returns:
         (run_dir, package_json) — run_dir is always a valid absolute path.
     """
-    best_dir = project_path
-    best_pj = None
+    dev_match = None       # Has scripts.dev — strongest
+    start_match = None     # Has scripts.start but not scripts.dev
+    any_match = None       # Has package.json but no dev/start
 
     for subdir in _APP_SUBDIRS:
         candidate = Path(project_path) / subdir / "package.json" if subdir else Path(project_path) / "package.json"
@@ -90,18 +91,17 @@ def find_dev_dir(project_path: str) -> Tuple[str, Optional[dict]]:
             continue
 
         scripts = pj.get("scripts", {})
-        has_dev = bool(scripts.get("dev") or scripts.get("start"))
+        d = str(candidate.parent)
 
-        if has_dev:
-            best_dir = str(candidate.parent)
-            best_pj = pj
-            break  # First match with dev scripts wins
-        elif best_pj is None:
-            # Keep as fallback if nothing better found
-            best_dir = str(candidate.parent)
-            best_pj = pj
+        if scripts.get("dev"):
+            dev_match = (d, pj)
+            break  # Best possible match
+        elif scripts.get("start") and start_match is None:
+            start_match = (d, pj)
+        elif any_match is None:
+            any_match = (d, pj)
 
-    return best_dir, best_pj
+    return dev_match or start_match or any_match or (project_path, None)
 
 
 # =============================================================================
