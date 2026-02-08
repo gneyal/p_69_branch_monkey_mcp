@@ -264,12 +264,18 @@ class DevServerManager:
             return worktree_path
 
         resolved = find_worktree_path(task_number, project_path)
-        if not resolved:
-            detail = f"No worktree found for task {task_number}"
-            if project_path:
-                detail += f" in {project_path}"
-            raise HTTPException(status_code=404, detail=detail)
-        return resolved
+        if resolved:
+            return resolved
+
+        # Fall back to project_path itself (e.g. main-chat with no worktree)
+        if project_path and Path(project_path).exists():
+            print(f"[DevServerManager] No worktree found, using project path: {project_path}")
+            return project_path
+
+        detail = f"No worktree found for task {task_number}"
+        if project_path:
+            detail += f" in {project_path}"
+        raise HTTPException(status_code=404, detail=detail)
 
     @staticmethod
     def _find_available_port(base: int) -> int:
