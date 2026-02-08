@@ -17,7 +17,11 @@ from typing import Optional, Callable, Dict, Any
 # Reduce ESC key delay (default 1000ms is way too long)
 os.environ.setdefault("ESCDELAY", "25")
 
-from .logo import LOGO, LOGO_WIDTH, LOGO_HEIGHT, GRADIENT_COLORS, get_animated_attrs
+from .logo import (
+    LOGO, LOGO_WIDTH, LOGO_HEIGHT, GRADIENT_COLORS, get_animated_attrs,
+    CREW_PERSON, CREW_HEAD_COLORS, CREW_BODY_COLOR, CREW_WIDTH, CREW_GAP,
+    FULL_WIDTH, get_crew_pulse,
+)
 
 
 class LogCapture:
@@ -160,9 +164,26 @@ class RelayTUI:
                 try:
                     curses.init_pair(10 + i, color_num, -1)
                 except curses.error:
-                    # Fallback for limited-color terminals
                     fb = curses.COLOR_BLUE if i < 3 else (curses.COLOR_CYAN if i < 6 else curses.COLOR_WHITE)
                     curses.init_pair(10 + i, fb, -1)
+            # Crew head colors: red, amber, teal (pairs 20–22)
+            for i, color_num in enumerate(CREW_HEAD_COLORS):
+                try:
+                    curses.init_pair(20 + i, color_num, -1)
+                except curses.error:
+                    fb = [curses.COLOR_RED, curses.COLOR_YELLOW, curses.COLOR_CYAN][i]
+                    curses.init_pair(20 + i, fb, -1)
+            # Crew body color (pair 23)
+            try:
+                curses.init_pair(23, CREW_BODY_COLOR, -1)
+            except curses.error:
+                curses.init_pair(23, curses.COLOR_WHITE, -1)
+            # Dim crew head variants (pairs 24–26) for pulse animation
+            for i, color_num in enumerate([52, 130, 23]):  # dim red, dim amber, dim teal
+                try:
+                    curses.init_pair(24 + i, color_num, -1)
+                except curses.error:
+                    curses.init_pair(24 + i, 8, -1)
 
         last_draw = 0.0
         # Logo animates smoothly
@@ -291,9 +312,20 @@ class RelayTUI:
         bar_w = min(50, w - 4)
         y = 1
 
-        # Header — animated logo or compact fallback
+        # Header — crew + animated logo or compact fallback
         ver = f"v{s['version']}" if s["version"] else ""
-        if w >= LOGO_WIDTH + 6:
+        if w >= FULL_WIDTH + 6:
+            # Draw crew on the left, text logo on the right
+            self._draw_crew(stdscr, y, col)
+            self._draw_animated_logo(stdscr, y, col + CREW_WIDTH + 2)
+            y += LOGO_HEIGHT
+            subtitle = f"relay {ver}"
+            self._put(stdscr, y, col + CREW_WIDTH + 2 + LOGO_WIDTH - len(subtitle), subtitle, self._dim())
+            y += 1
+            self._hline(stdscr, y, col, bar_w)
+            y += 2
+        elif w >= LOGO_WIDTH + 6:
+            # Text logo only (no room for crew)
             self._draw_animated_logo(stdscr, y, col)
             y += LOGO_HEIGHT
             subtitle = f"relay {ver}"
@@ -449,6 +481,39 @@ class RelayTUI:
         x += 10
         self._put(stdscr, footer_y, x, "[Q]", self._cyan() | self._bold())
         self._put(stdscr, footer_y, x + 4, "Quit", self._dim())
+
+    def _draw_crew(self, stdscr, y, col):
+        """Draw the 3 Rothko crew persons with pulsing heads."""
+        h, w = stdscr.getmaxyx()
+        person_w = len(CREW_PERSON[0])
+
+        for pidx in range(3):
+            px = col + pidx * (person_w + CREW_GAP)
+            pulse = get_crew_pulse(self._anim_frame, pidx)
+
+            for row_i, row_str in enumerate(CREW_PERSON):
+                ry = y + row_i
+                if ry >= h:
+                    break
+                for cx, ch in enumerate(row_str):
+                    if ch == " ":
+                        continue
+                    sx = px + cx
+                    if sx >= w - 1:
+                        break
+                    if row_i == 0:
+                        # Head — pick bright or dim based on pulse
+                        if pulse > 0.5:
+                            attr = curses.color_pair(20 + pidx) | curses.A_BOLD
+                        else:
+                            attr = curses.color_pair(24 + pidx)
+                    else:
+                        # Body — steady gray
+                        attr = curses.color_pair(23)
+                    try:
+                        stdscr.addch(ry, sx, ch, attr)
+                    except curses.error:
+                        pass
 
     def _draw_animated_logo(self, stdscr, y, col):
         """Draw the logo with smooth shimmer animation."""
