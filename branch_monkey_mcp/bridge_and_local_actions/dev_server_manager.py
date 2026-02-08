@@ -11,14 +11,23 @@ Responsibilities:
 """
 
 import asyncio
+import logging
 import os
 import signal
 import socket
 import subprocess
+import sys
 import urllib.request
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional
+
+log = logging.getLogger("dev_server_manager")
+log.setLevel(logging.DEBUG)
+if not log.handlers:
+    _h = logging.StreamHandler(sys.stderr)
+    _h.setFormatter(logging.Formatter("[DevServerManager] %(message)s"))
+    log.addHandler(_h)
 
 from pydantic import BaseModel
 
@@ -197,7 +206,7 @@ class DevServerManager:
             })
 
         for run_id in dead:
-            print(f"[DevServerManager] Pruning dead server {run_id}")
+            log.info(f" Pruning dead server {run_id}")
             self._cleanup(run_id)
 
         return {"servers": servers, "proxy": proxy_status}
@@ -234,7 +243,7 @@ class DevServerManager:
 
             tunnel_url = info.get("tunnel_url")
             if tunnel_url and run_id not in self._tunnels:
-                print(f"[DevServerManager] Stale tunnel for {run_id}, recreating")
+                log.info(f" Stale tunnel for {run_id}, recreating")
                 tunnel_url = self._start_tunnel(info["port"], run_id)
                 info["tunnel_url"] = tunnel_url
             elif not tunnel_url and tunnel:
@@ -251,7 +260,7 @@ class DevServerManager:
             }
 
         # Process died — clean up stale entry and return None so start() retries
-        print(f"[DevServerManager] Stale entry for {run_id} (port {info['port']} dead), cleaning up")
+        log.info(f" Stale entry for {run_id} (port {info['port']} dead), cleaning up")
         self._cleanup(run_id)
         return None
 
@@ -261,7 +270,7 @@ class DevServerManager:
         if worktree_path:
             if not Path(worktree_path).exists():
                 raise HTTPException(status_code=404, detail=f"Worktree path not found: {worktree_path}")
-            print(f"[DevServerManager] Using provided worktree: {worktree_path}")
+            log.info(f" Using provided worktree: {worktree_path}")
             return worktree_path
 
         resolved = find_worktree_path(task_number, project_path)
@@ -270,7 +279,7 @@ class DevServerManager:
 
         # Fall back to project_path itself (e.g. main-chat with no worktree)
         if project_path and Path(project_path).exists():
-            print(f"[DevServerManager] No worktree found, using project path: {project_path}")
+            log.info(f" No worktree found, using project path: {project_path}")
             return project_path
 
         detail = f"No worktree found for task {task_number}"
@@ -302,7 +311,7 @@ class DevServerManager:
 
         if dev_script:
             command = dev_script.replace("{port}", str(port))
-            print(f"[DevServerManager] Custom script for {run_id}: {command} (cwd: {run_cwd})")
+            log.info(f" Custom script for {run_id}: {command} (cwd: {run_cwd})")
             process = subprocess.Popen(
                 command, shell=True, cwd=run_cwd, **_SPAWN_DEFAULTS,
             )
@@ -317,7 +326,7 @@ class DevServerManager:
 
         node_modules = Path(run_cwd) / "node_modules"
         if not node_modules.exists():
-            print(f"[DevServerManager] Installing deps for task {task_number}...")
+            log.info(f" Installing deps for task {task_number}...")
             try:
                 subprocess.run(
                     "npm install",
@@ -333,10 +342,11 @@ class DevServerManager:
                 raise HTTPException(status_code=500, detail=f"npm install failed: {e.stderr}")
 
         cmd = f"npm run dev -- --port {port}"
-        print(f"[DevServerManager] Starting default server for {run_id} on port {port} (cwd: {run_cwd})")
+        log.info(f" Starting default server for {run_id} on port {port} (cwd: {run_cwd})")
         process = subprocess.Popen(
             cmd, shell=True, cwd=run_cwd, **_SPAWN_DEFAULTS,
         )
+        log.info(f" Spawned PID={process.pid} PGID={os.getpgid(process.pid)}")
         return process, cmd
 
     async def _wait_until_ready(self, process: subprocess.Popen, port: int, run_id: str):
@@ -356,11 +366,11 @@ class DevServerManager:
                     stderr_out = process.stderr.read().decode("utf-8", errors="replace").strip()
                 except Exception:
                     pass
-                print(f"[DevServerManager] Process for {run_id} exited with code {exit_code}")
+                log.info(f" Process PID={process.pid} for {run_id} exited with code {exit_code} at attempt {attempt}")
                 if stderr_out:
                     # Limit log noise
                     truncated = stderr_out[:1000]
-                    print(f"[DevServerManager] stderr: {truncated}")
+                    log.info(f" stderr: {truncated}")
                 return False, stderr_out[:500] or f"Process exited with code {exit_code}"
 
             # --- Check if port is listening ---
@@ -368,18 +378,18 @@ class DevServerManager:
                 try:
                     req = urllib.request.Request(f"http://localhost:{port}/", method="HEAD")
                     urllib.request.urlopen(req, timeout=2)
-                    print(f"[DevServerManager] Server {run_id} ready on port {port} (attempt {attempt + 1})")
+                    log.info(f" Server {run_id} ready on port {port} (attempt {attempt + 1})")
                     return True, None
                 except Exception:
                     # Port open but HTTP not ready yet — accept after a few tries
                     if attempt >= 3:
-                        print(f"[DevServerManager] Server {run_id} port {port} open (accepting)")
+                        log.info(f" Server {run_id} port {port} open (accepting)")
                         return True, None
 
             await asyncio.sleep(_READY_POLL_INTERVAL)
 
         # Timed out but process is still alive — it might just be slow
-        print(f"[DevServerManager] Server {run_id} not ready after {_READY_POLL_MAX_ATTEMPTS}s, but process alive — accepting")
+        log.info(f" Server {run_id} not ready after {_READY_POLL_MAX_ATTEMPTS}s, but process alive — accepting")
         return True, None
 
     def _cleanup(self, run_id: str):
@@ -419,10 +429,10 @@ class DevServerManager:
         try:
             tun = ngrok.connect(port, "http")
             self._tunnels[run_id] = tun
-            print(f"[DevServerManager] Tunnel for port {port}: {tun.public_url}")
+            log.info(f" Tunnel for port {port}: {tun.public_url}")
             return tun.public_url
         except Exception as e:
-            print(f"[DevServerManager] Tunnel failed: {e}")
+            log.info(f" Tunnel failed: {e}")
             return None
 
     def _stop_tunnel(self, run_id: str):
@@ -430,9 +440,9 @@ class DevServerManager:
         if tun:
             try:
                 ngrok.disconnect(tun.public_url)
-                print(f"[DevServerManager] Tunnel stopped for {run_id}")
+                log.info(f" Tunnel stopped for {run_id}")
             except Exception as e:
-                print(f"[DevServerManager] Tunnel stop failed: {e}")
+                log.info(f" Tunnel stop failed: {e}")
 
 
 # Singleton instance — used by routes
