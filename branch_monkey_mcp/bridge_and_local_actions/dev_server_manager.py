@@ -33,18 +33,15 @@ from .dev_proxy import start_dev_proxy, set_proxy_target, get_proxy_status, _pro
 from .worktree import find_worktree_path
 
 
-def _make_subprocess_env():
-    """Build a clean environment for Node.js subprocesses.
+def _wrap_cmd(cmd: str) -> str:
+    """Wrap a shell command to reset signals before exec.
 
-    Inherit essential env vars but avoid anything that could interfere
-    with Node.js/libuv initialization.
+    Node.js/libuv crashes (PlatformInit assertion in uv_loop_init) when
+    SIGPIPE is SIG_IGN, which Python/uvicorn sets. Python's restore_signals
+    doesn't reliably fix this when forking from a multithreaded uvicorn
+    process. Using a shell wrapper with explicit trap reset is reliable.
     """
-    env = dict(os.environ)
-    # Remove Python-specific vars that might confuse Node
-    for key in list(env):
-        if key.startswith(("PYTHON", "VIRTUAL_ENV", "CONDA")):
-            del env[key]
-    return env
+    return f"trap - PIPE INT TERM CHLD HUP; {cmd}"
 
 
 # Optional ngrok support
@@ -296,13 +293,12 @@ class DevServerManager:
             command = dev_script.replace("{port}", str(port))
             print(f"[DevServerManager] Custom script for {run_id}: {command}")
             process = subprocess.Popen(
-                command,
+                _wrap_cmd(command),
                 shell=True,
                 cwd=str(cwd),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 start_new_session=True,
-                env=_make_subprocess_env(),
             )
             return process, command
 
@@ -319,30 +315,30 @@ class DevServerManager:
             print(f"[DevServerManager] Installing deps for task {task_number}...")
             try:
                 subprocess.run(
-                    ["npm", "install"],
+                    _wrap_cmd("npm install"),
+                    shell=True,
                     cwd=str(frontend_path),
                     capture_output=True,
                     timeout=180,
                     check=True,
                     start_new_session=True,
-                    env=_make_subprocess_env(),
                 )
             except subprocess.TimeoutExpired:
                 raise HTTPException(status_code=500, detail="npm install timed out")
             except subprocess.CalledProcessError as e:
                 raise HTTPException(status_code=500, detail=f"npm install failed: {e.stderr}")
 
-        cmd = ["npm", "run", "dev", "--", "--port", str(port)]
+        cmd = f"npm run dev -- --port {port}"
         print(f"[DevServerManager] Starting default server for {run_id} on port {port}")
         process = subprocess.Popen(
-            cmd,
+            _wrap_cmd(cmd),
+            shell=True,
             cwd=str(frontend_path),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             start_new_session=True,
-            env=_make_subprocess_env(),
         )
-        return process, " ".join(cmd)
+        return process, cmd
 
     async def _wait_until_ready(self, process: subprocess.Popen, port: int, run_id: str):
         """Poll until the server is healthy or confirmed dead.
