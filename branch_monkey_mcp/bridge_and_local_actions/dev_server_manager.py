@@ -314,6 +314,31 @@ class DevServerManager:
         else:
             run_cwd, _ = find_dev_dir(cwd)
 
+        # Validate working directory exists
+        if not Path(run_cwd).exists():
+            raise HTTPException(
+                status_code=404,
+                detail=f"Working directory not found: {run_cwd}. Configure working_dir in project settings.",
+            )
+
+        # Ensure node_modules exists (applies to both custom and default scripts)
+        node_modules = Path(run_cwd) / "node_modules"
+        if not node_modules.exists():
+            _log(f" Installing deps for task {task_number} in {run_cwd}...")
+            try:
+                subprocess.run(
+                    "npm install",
+                    shell=True,
+                    cwd=run_cwd,
+                    timeout=180,
+                    check=True,
+                    **_SPAWN_DEFAULTS,
+                )
+            except subprocess.TimeoutExpired:
+                raise HTTPException(status_code=500, detail="npm install timed out")
+            except subprocess.CalledProcessError as e:
+                raise HTTPException(status_code=500, detail=f"npm install failed: {e.stderr}")
+
         # When tunneling (ngrok), tell Vite to accept requests from any host
         env = {**os.environ}
         if tunnel:
@@ -331,29 +356,6 @@ class DevServerManager:
             return process, command
 
         # Default: npm run dev
-        if not Path(run_cwd).exists():
-            raise HTTPException(
-                status_code=404,
-                detail=f"Working directory not found: {run_cwd}. Configure working_dir in project settings.",
-            )
-
-        node_modules = Path(run_cwd) / "node_modules"
-        if not node_modules.exists():
-            _log(f" Installing deps for task {task_number}...")
-            try:
-                subprocess.run(
-                    "npm install",
-                    shell=True,
-                    cwd=run_cwd,
-                    timeout=180,
-                    check=True,
-                    **_SPAWN_DEFAULTS,
-                )
-            except subprocess.TimeoutExpired:
-                raise HTTPException(status_code=500, detail="npm install timed out")
-            except subprocess.CalledProcessError as e:
-                raise HTTPException(status_code=500, detail=f"npm install failed: {e.stderr}")
-
         # When tunneling, add --host and allow all hosts for external access
         tunnel_flags = " --host --allowedHosts all" if tunnel else ""
         cmd = f"npm run dev -- --port {port}{tunnel_flags}"
