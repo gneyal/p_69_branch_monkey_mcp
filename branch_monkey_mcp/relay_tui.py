@@ -19,8 +19,6 @@ os.environ.setdefault("ESCDELAY", "25")
 
 from .logo import (
     LOGO, LOGO_WIDTH, LOGO_HEIGHT, GRADIENT_COLORS, get_animated_attrs,
-    PERSON, PERSON_WIDTH, PERSON_HEIGHT, PERSON_HEAD_ROWS, PERSON_BODY_COLOR,
-    FULL_WIDTH, FULL_HEIGHT,
 )
 
 
@@ -166,11 +164,6 @@ class RelayTUI:
                 except curses.error:
                     fb = curses.COLOR_BLUE if i < 3 else (curses.COLOR_CYAN if i < 6 else curses.COLOR_WHITE)
                     curses.init_pair(10 + i, fb, -1)
-            # Person body color (pair 20)
-            try:
-                curses.init_pair(20, PERSON_BODY_COLOR, -1)
-            except curses.error:
-                curses.init_pair(20, curses.COLOR_WHITE, -1)
 
         last_draw = 0.0
         # Logo animates smoothly
@@ -299,19 +292,9 @@ class RelayTUI:
         bar_w = min(50, w - 4)
         y = 1
 
-        # Header — person + animated logo or compact fallback
+        # Header — animated logo or compact fallback
         ver = f"v{s['version']}" if s["version"] else ""
-        if w >= FULL_WIDTH + 6:
-            # Person on left, text logo at head middle on right
-            self._draw_person(stdscr, y, col)
-            self._draw_animated_logo(stdscr, y + 2, col + PERSON_WIDTH + 2)
-            subtitle = f"relay {ver}"
-            text_x = col + PERSON_WIDTH + 2
-            self._put(stdscr, y + FULL_HEIGHT - 1, text_x + LOGO_WIDTH - len(subtitle), subtitle, self._dim())
-            y += FULL_HEIGHT
-            self._hline(stdscr, y, col, bar_w)
-            y += 2
-        elif w >= LOGO_WIDTH + 6:
+        if w >= LOGO_WIDTH + 6:
             # Text logo only (no room for crew)
             self._draw_animated_logo(stdscr, y, col)
             y += LOGO_HEIGHT
@@ -468,38 +451,6 @@ class RelayTUI:
         x += 10
         self._put(stdscr, footer_y, x, "[Q]", self._cyan() | self._bold())
         self._put(stdscr, footer_y, x + 4, "Quit", self._dim())
-
-    def _draw_person(self, stdscr, y, col):
-        """Draw the brand person icon — shimmer head, dim body."""
-        h, w = stdscr.getmaxyx()
-        num_levels = len(GRADIENT_COLORS)
-
-        for row_i, row_str in enumerate(PERSON):
-            ry = y + row_i
-            if ry >= h:
-                break
-            is_head = row_i < PERSON_HEAD_ROWS
-            if is_head:
-                intensities = get_animated_attrs(self._anim_frame, len(row_str), row=row_i)
-            for cx, ch in enumerate(row_str):
-                if ch == " ":
-                    continue
-                sx = col + cx
-                if sx >= w - 1:
-                    break
-                if is_head:
-                    val = intensities[cx] if cx < len(intensities) else 0.3
-                    level = int(val * (num_levels - 1))
-                    level = max(0, min(num_levels - 1, level))
-                    attr = curses.color_pair(10 + level)
-                    if level >= num_levels - 2:
-                        attr |= curses.A_BOLD
-                else:
-                    attr = curses.color_pair(20)
-                try:
-                    stdscr.addch(ry, sx, ch, attr)
-                except curses.error:
-                    pass
 
     def _draw_animated_logo(self, stdscr, y, col):
         """Draw the logo with smooth shimmer animation."""
