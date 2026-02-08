@@ -33,6 +33,20 @@ from .dev_proxy import start_dev_proxy, set_proxy_target, get_proxy_status, _pro
 from .worktree import find_worktree_path
 
 
+def _reset_signals():
+    """Reset signal handlers for child processes.
+
+    Python/uvicorn sets SIGPIPE to SIG_IGN which causes Node.js to crash
+    during PlatformInit (assertion failure in uv_loop_init).
+    """
+    os.setsid()
+    for sig in (signal.SIGPIPE, signal.SIGINT, signal.SIGTERM):
+        try:
+            signal.signal(sig, signal.SIG_DFL)
+        except (OSError, ValueError):
+            pass
+
+
 # Optional ngrok support
 try:
     from pyngrok import ngrok
@@ -281,7 +295,7 @@ class DevServerManager:
                 cwd=str(cwd),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                start_new_session=True,
+                preexec_fn=_reset_signals,
             )
             return process, command
 
@@ -316,7 +330,7 @@ class DevServerManager:
             cwd=str(frontend_path),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            start_new_session=True,
+            preexec_fn=_reset_signals,
         )
         return process, " ".join(cmd)
 
