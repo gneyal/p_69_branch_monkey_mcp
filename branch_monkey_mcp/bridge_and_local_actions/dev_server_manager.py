@@ -339,16 +339,18 @@ class DevServerManager:
             except subprocess.CalledProcessError as e:
                 raise HTTPException(status_code=500, detail=f"npm install failed: {e.stderr}")
 
-        # When tunneling (ngrok), tell Vite to accept requests from any host
+        # When tunneling (ngrok), configure env for external host access
         env = {**os.environ}
         if tunnel:
             env["DANGEROUSLY_DISABLE_HOST_CHECK"] = "true"  # CRA
             env["WATCHPACK_POLLING"] = "true"
+            # Vite 6.3+ reads this env var to allow tunnel hostnames
+            env["__VITE_ADDITIONAL_SERVER_ALLOWED_HOSTS"] = "ngrok-free.dev,ngrok.dev,ngrok.io,loca.lt,trycloudflare.com"
 
         spawn_kwargs = {**_SPAWN_DEFAULTS, "env": env} if tunnel else _SPAWN_DEFAULTS
 
-        # When tunneling, add --host and allow all hosts for external access
-        tunnel_flags = " --host --allowedHosts all" if tunnel else ""
+        # When tunneling, add --host so the server binds to 0.0.0.0
+        tunnel_flags = " --host" if tunnel else ""
 
         if dev_script:
             command = dev_script.replace("{port}", str(port)) + tunnel_flags
