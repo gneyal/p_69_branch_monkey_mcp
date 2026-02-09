@@ -124,6 +124,8 @@ class RelayClient:
         self.access_token: Optional[str] = None
         self.user_id: Optional[str] = None
         self.org_id: Optional[str] = None
+        self.user_email: Optional[str] = None
+        self.org_name: Optional[str] = None
 
         # Relay config (from cloud)
         self.relay_config: Optional[Dict[str, Any]] = None
@@ -206,6 +208,49 @@ class RelayClient:
             TOKEN_FILE.unlink()
             print(f"[Relay] Cleared cached token")
 
+    async def _fetch_account_info(self):
+        """Fetch user email and org name from the cloud API."""
+        headers = {}
+        if self.access_token:
+            headers["Authorization"] = f"Bearer {self.access_token}"
+        if self.org_id:
+            headers["X-Org-Id"] = self.org_id
+
+        async with httpx.AsyncClient() as client:
+            # Fetch org name
+            if self.org_id and not self.org_name:
+                try:
+                    resp = await client.get(
+                        f"{self.cloud_url}/api/organizations",
+                        headers=headers,
+                        timeout=10,
+                    )
+                    if resp.status_code == 200:
+                        orgs = resp.json().get("organizations", [])
+                        for org in orgs:
+                            if str(org.get("id")) == str(self.org_id):
+                                self.org_name = org.get("name")
+                                break
+                        # If only one org, use it
+                        if not self.org_name and len(orgs) == 1:
+                            self.org_name = orgs[0].get("name")
+                except Exception as e:
+                    print(f"[Relay] Could not fetch org info: {e}")
+
+            # Fetch user email
+            if self.user_id and not self.user_email:
+                try:
+                    resp = await client.get(
+                        f"{self.cloud_url}/api/me",
+                        headers=headers,
+                        timeout=10,
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        self.user_email = data.get("email") or data.get("user", {}).get("email")
+                except Exception:
+                    pass  # /api/me may not exist yet
+
     async def authenticate(self) -> bool:
         """
         Authenticate with the cloud using device auth flow.
@@ -217,6 +262,8 @@ class RelayClient:
             self.access_token = cached.get("access_token")
             self.user_id = cached.get("user_id")
             self.org_id = cached.get("org_id")
+            self.user_email = cached.get("user_email")
+            self.org_name = cached.get("org_name")
             self.relay_config = cached.get("relay_config")
             self.machine_id = cached.get("machine_id", self.machine_id)
 
@@ -289,17 +336,24 @@ class RelayClient:
                         self.access_token = data["access_token"]
                         self.user_id = data.get("user_id")
                         self.org_id = data.get("org_id")
+                        self.user_email = data.get("user_email")
+                        self.org_name = data.get("org_name")
                         self.relay_config = data.get("relay_config")
 
                         if not self.relay_config:
                             print("[Relay] Error: No relay config in response")
                             return False
 
+                        # Fetch account info (user email, org name) if not in auth response
+                        await self._fetch_account_info()
+
                         # Save everything
                         self._save_token({
                             "access_token": self.access_token,
                             "user_id": self.user_id,
                             "org_id": self.org_id,
+                            "user_email": self.user_email,
+                            "org_name": self.org_name,
                             "relay_config": self.relay_config
                         })
 
@@ -352,9 +406,11 @@ class RelayClient:
         self._tui_update(connection="connecting")
 
         print(f"\n[Relay] Connecting to Supabase Realtime...")
-        print(f"[Relay] User ID: {self.user_id}")
-        print(f"[Relay] Machine ID: {self.machine_id}")
-        print(f"[Relay] Machine name: {self.machine_name}")
+        if self.user_email:
+            print(f"[Relay] User: {self.user_email}")
+        if self.org_name:
+            print(f"[Relay] Organization: {self.org_name}")
+        print(f"[Relay] Machine: {self.machine_name} ({self.machine_id})")
         print(f"[Relay] Local port: {self.local_port}")
 
         try:
@@ -522,6 +578,25 @@ class RelayClient:
             if not await self.authenticate():
                 print("[Relay] Authentication failed, cannot connect")
                 return
+
+        # Fetch account info if not cached (e.g. old token file)
+        if not self.user_email or not self.org_name:
+            await self._fetch_account_info()
+            # Re-save token with updated info
+            if self.user_email or self.org_name:
+                self._save_token({
+                    "access_token": self.access_token,
+                    "user_id": self.user_id,
+                    "org_id": self.org_id,
+                    "user_email": self.user_email,
+                    "org_name": self.org_name,
+                    "relay_config": self.relay_config,
+                })
+
+        self._tui_update(
+            user_email=self.user_email,
+            org_name=self.org_name,
+        )
 
         self._running = True
 
@@ -992,6 +1067,19 @@ def _run_with_tui(args, home_dir, current_project):
     from .relay_tui import RelayTUI
 
     tui = RelayTUI()
+
+    # Pre-populate user/org info from cached token
+    cached_user_email = None
+    cached_org_name = None
+    if TOKEN_FILE.exists():
+        try:
+            with open(TOKEN_FILE) as f:
+                cached = json.load(f)
+                cached_user_email = cached.get("user_email")
+                cached_org_name = cached.get("org_name")
+        except Exception:
+            pass
+
     tui.update(
         version=VERSION,
         machine_name=args.name or socket.gethostname(),
@@ -1001,6 +1089,8 @@ def _run_with_tui(args, home_dir, current_project):
         port=args.port,
         dashboard_url=f"http://localhost:{args.port}/",
         cloud_url=args.cloud_url,
+        user_email=cached_user_email,
+        org_name=cached_org_name,
     )
     tui.install_capture()
 
@@ -1139,12 +1229,28 @@ def main():
         except ImportError:
             pass  # Fall through to raw logs
 
+    # Load cached account info for display
+    cached_user_email = None
+    cached_org_name = None
+    if TOKEN_FILE.exists():
+        try:
+            with open(TOKEN_FILE) as f:
+                cached = json.load(f)
+                cached_user_email = cached.get("user_email")
+                cached_org_name = cached.get("org_name")
+        except Exception:
+            pass
+
     print(f"")
     print(f"\033[1mKompany Relay\033[0m v{VERSION}")
     print(f"")
     print(f"  \033[38;2;107;114;128mThis connects your machine to kompany.dev so you can\033[0m")
     print(f"  \033[38;2;107;114;128mrun AI agents on your local codebase from the cloud.\033[0m")
     print(f"")
+    if cached_user_email:
+        print(f"  User:      \033[1m{cached_user_email}\033[0m")
+    if cached_org_name:
+        print(f"  Org:       \033[1m{cached_org_name}\033[0m")
     print(f"  Home:      \033[1m{home_dir}\033[0m")
     if current_project:
         project_name = os.path.basename(current_project)

@@ -87,6 +87,8 @@ class RelayTUI:
             "auth_state": "idle",
             "auth_url": None,
             "auth_code": None,
+            "user_email": None,
+            "org_name": None,
         }
         self._stdout_capture = LogCapture(sys.stdout)
         self._stderr_capture = LogCapture(sys.stderr)
@@ -314,6 +316,17 @@ class RelayTUI:
         if s["auth_state"] in ("authenticating", "waiting"):
             self._draw_auth(stdscr, y, col, bar_w)
             return
+
+        # Account info
+        if s.get("user_email"):
+            self._put(stdscr, y, lbl_col, "User", self._dim())
+            self._put(stdscr, y, val_col, s["user_email"], self._bold())
+            y += 1
+
+        if s.get("org_name"):
+            self._put(stdscr, y, lbl_col, "Organization", self._dim())
+            self._put(stdscr, y, val_col, s["org_name"], self._bold())
+            y += 1
 
         # Machine info
         self._put(stdscr, y, lbl_col, "Machine", self._dim())
