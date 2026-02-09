@@ -752,8 +752,10 @@ class RelayClient:
                 "capabilities": {"claude": True}
             }, on_conflict="machine_id").execute()
             print(f"[Relay] Registered compute node in database")
+            self._tui_update(registered=True)
         except Exception as e:
             print(f"[Relay] Warning: Could not register compute node: {e}")
+            self._tui_update(registered=str(e)[:80])
 
     async def _heartbeat_loop(self):
         """Send periodic heartbeats to keep connection alive and detect disconnects."""

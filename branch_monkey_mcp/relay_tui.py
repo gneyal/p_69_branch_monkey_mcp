@@ -90,6 +90,7 @@ class RelayTUI:
             "user_email": None,
             "org_name": None,
             "onboarding_needed": False,
+            "registered": None,  # None=pending, True=ok, str=error
         }
         self._stdout_capture = LogCapture(sys.stdout)
         self._stderr_capture = LogCapture(sys.stderr)
@@ -411,6 +412,23 @@ class RelayTUI:
         self._put(stdscr, y, lbl_col, "Cloud", self._dim())
         self._put(stdscr, y, val_col, "\u25cf", dot_attr)
         self._put(stdscr, y, val_col + 2, label)
+        y += 1
+
+        # Registration status
+        reg = s.get("registered")
+        self._put(stdscr, y, lbl_col, "Registered", self._dim())
+        if reg is True:
+            self._put(stdscr, y, val_col, "\u25cf", self._green() | self._bold())
+            self._put(stdscr, y, val_col + 2, "OK")
+        elif isinstance(reg, str):
+            self._put(stdscr, y, val_col, "\u25cf", self._red() | self._bold())
+            self._put(stdscr, y, val_col + 2, reg[:bar_w - val_col])
+        elif conn == "connected":
+            self._put(stdscr, y, val_col, "\u25cf", self._yellow() | self._bold())
+            self._put(stdscr, y, val_col + 2, "Pending...")
+        else:
+            self._put(stdscr, y, val_col, "\u25cf", self._dim())
+            self._put(stdscr, y, val_col + 2, "\u2014")
         y += 1
 
         # Local server
