@@ -1169,6 +1169,14 @@ def _run_with_tui(args, home_dir, current_project, onboarding_needed=False):
 
     tui._on_home_set = on_home_set
 
+    # Callback when user logs out
+    def on_logout():
+        if TOKEN_FILE.exists():
+            TOKEN_FILE.unlink()
+        print("[Relay] Logged out. Token cleared.")
+
+    tui._on_logout = on_logout
+
     # Pre-populate user/org info from cached token
     cached_user_email = None
     cached_org_name = None

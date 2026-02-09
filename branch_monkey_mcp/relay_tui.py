@@ -107,6 +107,7 @@ class RelayTUI:
         self._onboarding_input = ""
         self._onboarding_cursor = 0
         self._on_home_set = None  # Callback when home dir is confirmed
+        self._on_logout = None  # Callback when user logs out
 
     def install_capture(self):
         """Redirect stdout/stderr to capture logs."""
@@ -259,6 +260,10 @@ class RelayTUI:
                 self._home_cursor = len(self._home_input)
                 if stdscr:
                     curses.curs_set(1)
+        elif key == ord("d") or key == ord("D"):
+            if self._view == "dashboard" and self._on_logout:
+                self._on_logout()
+                self._running = False
         elif key == curses.KEY_UP and self._view == "logs":
             self._scroll_offset += 1
         elif key == curses.KEY_DOWN and self._view == "logs":
@@ -481,6 +486,9 @@ class RelayTUI:
         self._put(stdscr, footer_y, x, "[H]", self._cyan() | self._bold())
         self._put(stdscr, footer_y, x + 4, "Home", self._dim())
         x += 10
+        self._put(stdscr, footer_y, x, "[D]", self._cyan() | self._bold())
+        self._put(stdscr, footer_y, x + 4, "Logout", self._dim())
+        x += 12
         self._put(stdscr, footer_y, x, "[Q]", self._cyan() | self._bold())
         self._put(stdscr, footer_y, x + 4, "Quit", self._dim())
 
