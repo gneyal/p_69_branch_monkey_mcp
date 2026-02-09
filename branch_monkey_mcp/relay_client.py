@@ -744,7 +744,6 @@ class RelayClient:
             await self.supabase.table("compute_nodes").upsert({
                 "machine_id": self.machine_id,
                 "user_id": self.user_id,
-                "org_id": self.org_id,
                 "name": self.machine_name,
                 "node_type": "local",
                 "status": "online",
