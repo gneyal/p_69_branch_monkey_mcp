@@ -738,20 +738,31 @@ class RelayClient:
 
             await self._unregister_machine()
 
+    async def _cloud_heartbeat(self, status: str = "online"):
+        """Register/heartbeat via cloud API (bypasses RLS)."""
+        headers = {}
+        if self.access_token:
+            headers["Authorization"] = f"Bearer {self.access_token}"
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{self.cloud_url}/api/relay/heartbeat",
+                headers=headers,
+                json={
+                    "machine_id": self.machine_id,
+                    "machine_name": self.machine_name,
+                    "status": status,
+                    "local_port": self.local_port,
+                },
+                timeout=15,
+            )
+            resp.raise_for_status()
+            return resp.json()
+
     async def _register_machine(self):
-        """Register this machine as a compute node in the database."""
+        """Register this machine as a compute node via the cloud API."""
         try:
-            await self.supabase.table("compute_nodes").upsert({
-                "machine_id": self.machine_id,
-                "user_id": self.user_id,
-                "name": self.machine_name,
-                "node_type": "local",
-                "status": "online",
-                "last_heartbeat": datetime.utcnow().isoformat(),
-                "config": {"local_port": self.local_port},
-                "capabilities": {"claude": True}
-            }, on_conflict="machine_id").execute()
-            print(f"[Relay] Registered compute node in database")
+            await self._cloud_heartbeat("online")
+            print(f"[Relay] Registered compute node via cloud API")
             self._tui_update(registered=True)
         except Exception as e:
             print(f"[Relay] Warning: Could not register compute node: {e}")
@@ -768,11 +779,8 @@ class RelayClient:
                 if self.connection_state != ConnectionState.CONNECTED:
                     continue
 
-                # Heartbeat to Supabase
-                await self.supabase.table("compute_nodes").update({
-                    "last_heartbeat": datetime.utcnow().isoformat(),
-                    "status": "online"
-                }).eq("machine_id", self.machine_id).execute()
+                # Heartbeat to cloud API
+                await self._cloud_heartbeat("online")
 
                 # Heartbeat to local server (so dashboard knows relay is connected)
                 await self._send_local_heartbeat()
@@ -819,9 +827,7 @@ class RelayClient:
     async def _unregister_machine(self):
         """Mark compute node as offline."""
         try:
-            await self.supabase.table("compute_nodes").update({
-                "status": "offline"
-            }).eq("machine_id", self.machine_id).execute()
+            await self._cloud_heartbeat("offline")
         except Exception:
             pass
         # Notify local server of disconnection
