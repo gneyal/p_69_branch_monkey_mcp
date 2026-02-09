@@ -265,6 +265,57 @@ class RelayClient:
                 except Exception:
                     pass  # /api/me may not exist yet
 
+    async def _fetch_account_info_supabase(self):
+        """Fetch user/org info directly from Supabase after connecting."""
+        if not self.supabase:
+            return
+
+        try:
+            # Get user email from device_codes table
+            if self.user_id and not self.user_email:
+                result = await self.supabase.table("device_codes").select(
+                    "user_id"
+                ).eq("access_token", self.access_token).eq(
+                    "status", "approved"
+                ).limit(1).execute()
+                # device_codes has user_id but not email; try auth admin
+                # Fall back: check if compute_nodes has email-like data
+                pass
+
+            # Get org name from organizations table
+            if not self.org_name:
+                result = await self.supabase.table("organizations").select(
+                    "id, name"
+                ).execute()
+                orgs = result.data or []
+                if self.org_id:
+                    for org in orgs:
+                        if str(org.get("id")) == str(self.org_id):
+                            self.org_name = org.get("name")
+                            break
+                if not self.org_name and len(orgs) >= 1:
+                    self.org_name = orgs[0].get("name")
+                    if not self.org_id:
+                        self.org_id = str(orgs[0].get("id"))
+
+            if self.org_name or self.user_email:
+                self._tui_update(user_email=self.user_email, org_name=self.org_name)
+                # Update cached token
+                self._save_token({
+                    "access_token": self.access_token,
+                    "user_id": self.user_id,
+                    "org_id": self.org_id,
+                    "user_email": self.user_email,
+                    "org_name": self.org_name,
+                    "relay_config": self.relay_config,
+                })
+                if self.org_name:
+                    print(f"[Relay] Organization: {self.org_name}")
+                if self.user_email:
+                    print(f"[Relay] User: {self.user_email}")
+        except Exception as e:
+            print(f"[Relay] Could not fetch account info from Supabase: {e}")
+
     async def authenticate(self) -> bool:
         """
         Authenticate with the cloud using device auth flow.
@@ -457,6 +508,10 @@ class RelayClient:
             print(f"\n[Relay] Connected to Supabase Realtime!")
             print(f"[Relay] Channel: {channel_name}")
             print(f"[Relay] Ready to receive requests from cloud\n")
+
+            # Fetch account info via Supabase if not already known
+            if not self.user_email or not self.org_name:
+                await self._fetch_account_info_supabase()
 
             # Register this machine
             await self._register_machine()
