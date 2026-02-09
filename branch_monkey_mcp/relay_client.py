@@ -65,6 +65,7 @@ VERSION = "4"
 CONFIG_DIR = Path.home() / ".kompany"
 TOKEN_FILE = CONFIG_DIR / "relay_token.json"
 MACHINE_ID_FILE = CONFIG_DIR / "machine_id"
+PERSISTENT_CONFIG_FILE = CONFIG_DIR / "config.json"
 
 # Cloud API URL - fallback if /api/config fetch fails
 FALLBACK_CLOUD_URL = "https://kompany.dev"
@@ -88,6 +89,26 @@ def fetch_cloud_url_from_config(fallback_url: str = FALLBACK_CLOUD_URL) -> str:
     except Exception as e:
         print(f"[Relay] Could not fetch config: {e}")
     return fallback_url
+
+
+def load_persistent_config() -> Dict[str, Any]:
+    """Load persistent relay settings (home_dir, etc.)."""
+    if PERSISTENT_CONFIG_FILE.exists():
+        try:
+            with open(PERSISTENT_CONFIG_FILE) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+def save_persistent_config(updates: Dict[str, Any]):
+    """Save persistent relay settings (merges with existing)."""
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    config = load_persistent_config()
+    config.update(updates)
+    with open(PERSISTENT_CONFIG_FILE, "w") as f:
+        json.dump(config, f, indent=2)
 
 
 # Will be resolved at runtime
@@ -1130,12 +1151,23 @@ def setup_mcp_config(working_dir: str, cloud_url: str = DEFAULT_CLOUD_URL) -> bo
         return False
 
 
-def _run_with_tui(args, home_dir, current_project):
+def _run_with_tui(args, home_dir, current_project, onboarding_needed=False):
     """Run the relay with terminal UI."""
     import threading
     from .relay_tui import RelayTUI
 
     tui = RelayTUI()
+
+    # Callback when user sets home dir during onboarding or [H] edit
+    def on_home_set(path):
+        save_persistent_config({"home_dir": path})
+        try:
+            from .bridge_and_local_actions import set_home_directory
+            set_home_directory(path)
+        except Exception:
+            pass
+
+    tui._on_home_set = on_home_set
 
     # Pre-populate user/org info from cached token
     cached_user_email = None
@@ -1160,6 +1192,7 @@ def _run_with_tui(args, home_dir, current_project):
         cloud_url=args.cloud_url,
         user_email=cached_user_email,
         org_name=cached_org_name,
+        onboarding_needed=onboarding_needed,
     )
     tui.install_capture()
 
@@ -1288,12 +1321,22 @@ def main():
         current_project = working_dir
         home_dir = os.path.dirname(working_dir)
 
+    # Load persistent config (saved home_dir from onboarding)
+    persistent_cfg = load_persistent_config()
+    onboarding_needed = "home_dir" not in persistent_cfg
+
+    # Use saved home_dir if available and no explicit --dir was set
+    if not dir_explicitly_set and not env_working_dir:
+        saved_home = persistent_cfg.get("home_dir")
+        if saved_home and os.path.isdir(saved_home):
+            home_dir = saved_home
+
     # Terminal UI mode (default when running in a terminal)
     use_tui = not args.no_tui and sys.stdout.isatty()
     if use_tui:
         try:
             from .relay_tui import RelayTUI  # noqa: F401
-            _run_with_tui(args, home_dir, current_project)
+            _run_with_tui(args, home_dir, current_project, onboarding_needed=onboarding_needed)
             return
         except ImportError:
             pass  # Fall through to raw logs

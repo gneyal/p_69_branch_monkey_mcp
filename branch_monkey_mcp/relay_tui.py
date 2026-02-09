@@ -89,6 +89,7 @@ class RelayTUI:
             "auth_code": None,
             "user_email": None,
             "org_name": None,
+            "onboarding_needed": False,
         }
         self._stdout_capture = LogCapture(sys.stdout)
         self._stderr_capture = LogCapture(sys.stderr)
@@ -102,6 +103,10 @@ class RelayTUI:
         self._editing_home = False
         self._home_input = ""
         self._home_cursor = 0
+        self._onboarding_initialized = False
+        self._onboarding_input = ""
+        self._onboarding_cursor = 0
+        self._on_home_set = None  # Callback when home dir is confirmed
 
     def install_capture(self):
         """Redirect stdout/stderr to capture logs."""
@@ -196,12 +201,21 @@ class RelayTUI:
                 last_draw = 0.0  # Force redraw after key press
 
     def _handle_key(self, key, stdscr=None):
+        # Onboarding mode (text input active, only Ctrl-C quits)
+        s = self.state
+        if s.get("onboarding_needed") and s["auth_state"] not in ("authenticating", "waiting"):
+            self._handle_onboarding_key(key, stdscr)
+            return
+
         # Home directory editing mode
         if self._editing_home:
             if key in (curses.KEY_ENTER, 10, 13):  # Enter
                 path = self._home_input.strip()
                 if path and os.path.isdir(os.path.expanduser(path)):
-                    self.state["home_dir"] = os.path.expanduser(path)
+                    expanded = os.path.expanduser(path)
+                    self.state["home_dir"] = expanded
+                    if self._on_home_set:
+                        self._on_home_set(expanded)
                 self._editing_home = False
             elif key == 27:  # Escape — cancel
                 self._editing_home = False
@@ -315,6 +329,11 @@ class RelayTUI:
         # Auth screen (takes over dashboard while authenticating)
         if s["auth_state"] in ("authenticating", "waiting"):
             self._draw_auth(stdscr, y, col, bar_w)
+            return
+
+        # Onboarding screen (first run, after auth)
+        if s.get("onboarding_needed"):
+            self._draw_onboarding(stdscr, y, col, bar_w)
             return
 
         # Account info
@@ -491,6 +510,108 @@ class RelayTUI:
                     stdscr.addch(row_y, screen_x, ch, attr)
                 except curses.error:
                     pass
+
+    def _handle_onboarding_key(self, key, stdscr):
+        """Handle keyboard input during onboarding."""
+        if not self._onboarding_initialized:
+            self._onboarding_input = self.state.get("home_dir", "")
+            self._onboarding_cursor = len(self._onboarding_input)
+            self._onboarding_initialized = True
+
+        if key in (curses.KEY_ENTER, 10, 13):  # Enter — accept
+            path = self._onboarding_input.strip()
+            if path:
+                expanded = os.path.expanduser(path)
+                if os.path.isdir(expanded):
+                    self.state["home_dir"] = expanded
+                    self.state["onboarding_needed"] = False
+                    if self._on_home_set:
+                        self._on_home_set(expanded)
+                    if stdscr:
+                        curses.curs_set(0)
+                    return
+                # Directory doesn't exist — don't accept, stay in onboarding
+            else:
+                # Empty input — use current default
+                self.state["onboarding_needed"] = False
+                if self._on_home_set:
+                    self._on_home_set(self.state.get("home_dir", ""))
+                if stdscr:
+                    curses.curs_set(0)
+        elif key in (curses.KEY_BACKSPACE, 127, 8):
+            if self._onboarding_cursor > 0:
+                self._onboarding_input = (
+                    self._onboarding_input[: self._onboarding_cursor - 1]
+                    + self._onboarding_input[self._onboarding_cursor :]
+                )
+                self._onboarding_cursor -= 1
+        elif key == curses.KEY_LEFT:
+            self._onboarding_cursor = max(0, self._onboarding_cursor - 1)
+        elif key == curses.KEY_RIGHT:
+            self._onboarding_cursor = min(len(self._onboarding_input), self._onboarding_cursor + 1)
+        elif key == curses.KEY_HOME or key == 1:  # Ctrl-A
+            self._onboarding_cursor = 0
+        elif key == curses.KEY_END or key == 5:  # Ctrl-E
+            self._onboarding_cursor = len(self._onboarding_input)
+        elif 32 <= key <= 126:
+            ch = chr(key)
+            self._onboarding_input = (
+                self._onboarding_input[: self._onboarding_cursor]
+                + ch
+                + self._onboarding_input[self._onboarding_cursor :]
+            )
+            self._onboarding_cursor += 1
+
+    def _draw_onboarding(self, stdscr, y, col, bar_w):
+        """Draw the first-run onboarding screen."""
+        lbl_col = col + 2
+        h, w = stdscr.getmaxyx()
+
+        if not self._onboarding_initialized:
+            self._onboarding_input = self.state.get("home_dir", "")
+            self._onboarding_cursor = len(self._onboarding_input)
+            self._onboarding_initialized = True
+
+        self._put(stdscr, y, lbl_col, "Welcome! Let's set up your workspace.", self._bold())
+        y += 2
+        self._put(stdscr, y, lbl_col, "Where do your projects live?", self._dim())
+        y += 1
+        self._put(stdscr, y, lbl_col, "This is the parent folder containing your code.", self._dim())
+        y += 2
+
+        # Home dir input field
+        self._put(stdscr, y, lbl_col, "Home:", self._dim())
+        input_x = lbl_col + 7
+        field_w = max(30, bar_w - input_x + col)
+        display = self._onboarding_input[:field_w]
+        self._put(stdscr, y, input_x, display, self._bold() | self._cyan())
+
+        # Blinking cursor
+        cursor_x = input_x + min(self._onboarding_cursor, field_w)
+        if 0 <= cursor_x < w - 1:
+            try:
+                curses.curs_set(1)
+                stdscr.move(y, cursor_x)
+            except curses.error:
+                pass
+        y += 2
+
+        # Validate and show status
+        path = self._onboarding_input.strip()
+        if path:
+            expanded = os.path.expanduser(path)
+            if os.path.isdir(expanded):
+                self._put(stdscr, y, lbl_col, "Directory exists", self._green())
+            else:
+                self._put(stdscr, y, lbl_col, "Directory not found", self._red())
+        y += 2
+
+        # Footer
+        self._hline(stdscr, y, col, bar_w)
+        y += 1
+        x = lbl_col
+        self._put(stdscr, y, x, "[Enter]", self._cyan() | self._bold())
+        self._put(stdscr, y, x + 8, "Continue", self._dim())
 
     def _draw_auth(self, stdscr, y, col, bar_w):
         s = self.state
