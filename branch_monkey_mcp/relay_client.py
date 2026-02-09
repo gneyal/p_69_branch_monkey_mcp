@@ -217,8 +217,8 @@ class RelayClient:
             headers["X-Org-Id"] = self.org_id
 
         async with httpx.AsyncClient() as client:
-            # Fetch org name
-            if self.org_id and not self.org_name:
+            # Fetch org name (and user email from org membership)
+            if not self.org_name:
                 try:
                     resp = await client.get(
                         f"{self.cloud_url}/api/organizations",
@@ -226,19 +226,29 @@ class RelayClient:
                         timeout=10,
                     )
                     if resp.status_code == 200:
-                        orgs = resp.json().get("organizations", [])
-                        for org in orgs:
-                            if str(org.get("id")) == str(self.org_id):
-                                self.org_name = org.get("name")
-                                break
-                        # If only one org, use it
-                        if not self.org_name and len(orgs) == 1:
+                        data = resp.json()
+                        orgs = data.get("organizations", [])
+
+                        # Try to match by org_id, otherwise use first org
+                        if self.org_id:
+                            for org in orgs:
+                                if str(org.get("id")) == str(self.org_id):
+                                    self.org_name = org.get("name")
+                                    break
+                        if not self.org_name and len(orgs) >= 1:
                             self.org_name = orgs[0].get("name")
+                            # Also capture org_id if we didn't have one
+                            if not self.org_id:
+                                self.org_id = str(orgs[0].get("id"))
+
+                        # Some endpoints return user info alongside orgs
+                        if not self.user_email:
+                            self.user_email = data.get("email") or data.get("user_email")
                 except Exception as e:
                     print(f"[Relay] Could not fetch org info: {e}")
 
-            # Fetch user email
-            if self.user_id and not self.user_email:
+            # Fetch user email from /api/me
+            if not self.user_email:
                 try:
                     resp = await client.get(
                         f"{self.cloud_url}/api/me",
@@ -247,7 +257,11 @@ class RelayClient:
                     )
                     if resp.status_code == 200:
                         data = resp.json()
-                        self.user_email = data.get("email") or data.get("user", {}).get("email")
+                        self.user_email = (
+                            data.get("email")
+                            or data.get("user_email")
+                            or data.get("user", {}).get("email")
+                        )
                 except Exception:
                     pass  # /api/me may not exist yet
 
