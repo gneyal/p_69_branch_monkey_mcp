@@ -109,6 +109,7 @@ class RelayTUI:
         self._onboarding_cursor = 0
         self._on_home_set = None  # Callback when home dir is confirmed
         self._on_logout = None  # Callback when user logs out
+        self._verbose = False
 
     def install_capture(self):
         """Redirect stdout/stderr to capture logs."""
@@ -261,6 +262,9 @@ class RelayTUI:
                 self._home_cursor = len(self._home_input)
                 if stdscr:
                     curses.curs_set(1)
+        elif key == ord("v") or key == ord("V"):
+            if self._view == "dashboard":
+                self._verbose = not self._verbose
         elif key == ord("d") or key == ord("D"):
             if self._view == "dashboard" and self._on_logout:
                 self._on_logout()
@@ -413,6 +417,9 @@ class RelayTUI:
         self._put(stdscr, y, val_col, "\u25cf", dot_attr)
         self._put(stdscr, y, val_col + 2, label)
         y += 1
+        if self._verbose:
+            self._put(stdscr, y, val_col, "Realtime channel to kompany.dev", self._dim())
+            y += 1
 
         # Registration status
         reg = s.get("registered")
@@ -430,6 +437,9 @@ class RelayTUI:
             self._put(stdscr, y, val_col, "\u25cf", self._dim())
             self._put(stdscr, y, val_col + 2, "\u2014")
         y += 1
+        if self._verbose:
+            self._put(stdscr, y, val_col, "Machine visible to the web dashboard", self._dim())
+            y += 1
 
         # Local server
         self._put(stdscr, y, lbl_col, "Local Server", self._dim())
@@ -440,6 +450,9 @@ class RelayTUI:
             self._put(stdscr, y, val_col, "\u25cf", self._yellow() | self._bold())
             self._put(stdscr, y, val_col + 2, "Starting...")
         y += 1
+        if self._verbose:
+            self._put(stdscr, y, val_col, "Handles agent execution requests", self._dim())
+            y += 1
 
         # Heartbeat
         self._put(stdscr, y, lbl_col, "Heartbeat", self._dim())
@@ -458,7 +471,11 @@ class RelayTUI:
         else:
             self._put(stdscr, y, val_col, "\u25cf", self._dim())
             self._put(stdscr, y, val_col + 2, "\u2014")
-        y += 2
+        y += 1
+        if self._verbose:
+            self._put(stdscr, y, val_col, "Keeps connection alive, detects drops", self._dim())
+            y += 1
+        y += 1
 
         # Stats
         self._put(stdscr, y, lbl_col, "STATS", self._dim())
@@ -504,6 +521,9 @@ class RelayTUI:
         self._put(stdscr, footer_y, x, "[H]", self._cyan() | self._bold())
         self._put(stdscr, footer_y, x + 4, "Home", self._dim())
         x += 10
+        self._put(stdscr, footer_y, x, "[V]", self._cyan() | self._bold())
+        self._put(stdscr, footer_y, x + 4, "Verbose", self._dim())
+        x += 13
         self._put(stdscr, footer_y, x, "[D]", self._cyan() | self._bold())
         self._put(stdscr, footer_y, x + 4, "Logout", self._dim())
         x += 12
