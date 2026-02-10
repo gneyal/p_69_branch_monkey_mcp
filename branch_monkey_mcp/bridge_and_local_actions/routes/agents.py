@@ -29,6 +29,7 @@ class CreateAgentRequest(BaseModel):
     prompt: Optional[str] = None
     skip_branch: bool = False
     branch: Optional[str] = None
+    defer_start: bool = False
 
 
 class TaskExecuteRequest(BaseModel):
@@ -143,7 +144,8 @@ async def create_agent(request: CreateAgentRequest):
         working_dir=request.working_dir,
         prompt=request.prompt,
         skip_branch=request.skip_branch,
-        branch=request.branch
+        branch=request.branch,
+        defer_start=request.defer_start
     )
 
 
@@ -180,6 +182,11 @@ async def send_input(agent_id: str, request: InputRequest):
             image_refs = "\n".join([f"Please read and analyze this image file: {path}" for path in image_paths])
             message = f"{image_refs}\n\n{message}" if message else image_refs
             print(f"[LocalServer] Added {len(image_paths)} image references to message")
+
+    # Handle prepared sessions: first message spawns the CLI process
+    if agent["status"] == "prepared":
+        await agent_manager.spawn_cli_process(agent_id, message, image_paths)
+        return {"success": True, "action": "started", "images": len(image_paths)}
 
     if agent["status"] in ("paused", "completed", "failed") and agent.get("session_id"):
         await agent_manager.resume_session(agent_id, message, image_paths)
@@ -250,6 +257,14 @@ async def stream_output(agent_id: str, request: Request):
                 "work_dir": agent.get('work_dir')
             }
             yield f"data: {json.dumps(worktree_event)}\n\n"
+
+            # If agent is prepared (deferred start), send status so frontend knows
+            if agent['status'] == 'prepared':
+                prepared_event = {
+                    "type": "prepared",
+                    "message": "Session ready. Send a message to start."
+                }
+                yield f"data: {json.dumps(prepared_event)}\n\n"
 
             # If agent is already paused/completed, send that status immediately
             if agent['status'] in ('paused', 'completed', 'failed'):
