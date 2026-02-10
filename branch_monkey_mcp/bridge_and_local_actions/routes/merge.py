@@ -268,27 +268,49 @@ def merge_worktree_branch(request: MergeRequest):
     # Get source branch - either from request or derive from worktree
     source = request.branch
 
-    # Verify the branch actually exists in git
-    if source:
-        verify = subprocess.run(
-            ["git", "rev-parse", "--verify", source],
+    # Helper: check if a branch ref resolves in git_root
+    def branch_resolvable(branch_name):
+        v = subprocess.run(
+            ["git", "rev-parse", "--verify", branch_name],
             cwd=git_root,
             capture_output=True,
             text=True
         )
-        if verify.returncode != 0:
-            # Branch name doesn't resolve - try to find the actual branch
-            print(f"[Merge] Branch '{source}' not found, trying to derive from worktree for task {request.task_number}")
-            source = None
+        return v.returncode == 0
+
+    # Verify the branch actually exists in git
+    if source and not branch_resolvable(source):
+        print(f"[Merge] Branch '{source}' not found locally, trying to fetch from remote...")
+        # Try fetching the branch from remote
+        fetch = subprocess.run(
+            ["git", "fetch", "origin", f"{source}:{source}"],
+            cwd=git_root,
+            capture_output=True,
+            text=True
+        )
+        if fetch.returncode == 0 and branch_resolvable(source):
+            print(f"[Merge] Successfully fetched '{source}' from remote")
+        else:
+            # Try origin/<branch> as a fallback ref
+            if branch_resolvable(f"origin/{source}"):
+                print(f"[Merge] Using remote-tracking ref 'origin/{source}'")
+                source = f"origin/{source}"
+            else:
+                print(f"[Merge] Branch '{source}' not found, trying to derive from worktree for task {request.task_number}")
+                source = None
 
     if not source:
-        # Try to find the actual branch from worktree
+        # Try to find the actual branch from worktree (pass project path for correct repo)
         actual = find_actual_branch(request.task_number)
         if actual:
-            source = actual
-        else:
+            # Verify the found branch resolves in our git_root
+            if branch_resolvable(actual):
+                source = actual
+            elif branch_resolvable(f"origin/{actual}"):
+                source = f"origin/{actual}"
+        if not source:
             # Last resort: check worktree HEAD directly
-            worktree_path = find_worktree_path(request.task_number)
+            worktree_path = find_worktree_path(request.task_number, project_path=work_dir)
             if worktree_path:
                 try:
                     result = subprocess.run(
@@ -298,7 +320,9 @@ def merge_worktree_branch(request: MergeRequest):
                         text=True
                     )
                     if result.returncode == 0:
-                        source = result.stdout.strip()
+                        candidate = result.stdout.strip()
+                        if candidate and candidate != "HEAD" and branch_resolvable(candidate):
+                            source = candidate
                 except Exception:
                     pass
 
@@ -340,7 +364,27 @@ def merge_worktree_branch(request: MergeRequest):
         )
 
         if result.returncode != 0:
-            raise HTTPException(status_code=500, detail=f"Merge failed: {result.stderr}")
+            # If branch can't be resolved, try fetching from remote and retry
+            if "not something we can merge" in result.stderr:
+                print(f"[Merge] Branch '{source}' not mergeable, attempting fetch from origin...")
+                # Abort any partial merge state
+                subprocess.run(["git", "merge", "--abort"], cwd=git_root, capture_output=True, text=True)
+                # Fetch and retry
+                clean_source = source.replace("origin/", "")
+                subprocess.run(
+                    ["git", "fetch", "origin", f"{clean_source}:{clean_source}"],
+                    cwd=git_root,
+                    capture_output=True,
+                    text=True
+                )
+                result = subprocess.run(
+                    ["git", "merge", clean_source, "--no-edit", "-X", "theirs"],
+                    cwd=git_root,
+                    capture_output=True,
+                    text=True
+                )
+            if result.returncode != 0:
+                raise HTTPException(status_code=500, detail=f"Merge failed: {result.stderr}")
 
         # Check if conflicts were auto-resolved
         auto_resolved = "Auto-merging" in result.stdout and "CONFLICT" not in result.stdout
