@@ -43,6 +43,7 @@ class TaskExecuteRequest(BaseModel):
     local_path: Optional[str] = None
     repository_url: Optional[str] = None
     agent_slug: Optional[str] = None
+    system_prompt: Optional[str] = None
 
 
 class ImageData(BaseModel):
@@ -109,15 +110,10 @@ async def execute_task(request: TaskExecuteRequest):
     print(f"[TaskExecute] Starting task #{request.task_number}: {request.title}")
     print(f"[TaskExecute] Working directory: {working_dir}")
 
-    # Look up agent definition system_prompt if agent_slug is provided
-    system_prompt = None
-    if request.agent_slug:
-        from .advanced import _agent_definitions
-        for a in _agent_definitions.values():
-            if a.get("slug") == request.agent_slug:
-                system_prompt = a.get("system_prompt")
-                print(f"[TaskExecute] Using agent: {a.get('name')} ({request.agent_slug})")
-                break
+    # Use system_prompt if provided by the caller (fetched from cloud DB)
+    system_prompt = request.system_prompt
+    if system_prompt:
+        print(f"[TaskExecute] Using agent system prompt ({request.agent_slug or 'custom'})")
 
     # Build the prompt with task info
     prompt = f"Work on task #{request.task_number}: {request.title}"

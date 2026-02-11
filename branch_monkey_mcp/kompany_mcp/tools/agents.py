@@ -352,9 +352,10 @@ def monkey_apply_agent(
             local_response = requests.post(
                 f"{local_url}/api/local-claude/apply-agent",
                 json={
-                    "agent_slug": agent_slug,
                     "instructions": full_instructions,
-                    "project_id": state.CURRENT_PROJECT_ID
+                    "system_prompt": agent.get("system_prompt", ""),
+                    "allowed_tools": agent.get("allowed_tools"),
+                    "agent_slug": agent_slug,
                 },
                 timeout=130
             )

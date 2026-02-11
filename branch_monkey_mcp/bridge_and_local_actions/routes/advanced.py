@@ -9,7 +9,6 @@ import re
 import shutil
 import signal
 import subprocess
-import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -28,143 +27,10 @@ _time_machine_previews: Dict[str, dict] = {}
 _time_machine_tunnels: Dict[str, object] = {}  # Track ngrok tunnels for time machine
 TIME_MACHINE_BASE_PORT = 6100
 
-# Track agent definitions (persisted to file)
-_agent_definitions: Dict[str, dict] = {}
-
-# File path for persisting custom agent definitions
-_AGENTS_FILE = Path.home() / ".branch-monkey" / "agent-definitions.json"
-
-# Default agent definitions
-DEFAULT_AGENT_DEFINITIONS = [
-    {
-        "id": "default-planner",
-        "slug": "planner",
-        "name": "Planner Agent",
-        "description": "Plans versions and decomposes features into tasks",
-        "system_prompt": """You are a project planning assistant. Your job is to break down a version/milestone into actionable development tasks.
-
-IMPORTANT: You MUST respond with ONLY valid JSON. No explanations, no markdown, no text before or after the JSON.
-
-Rules:
-1. Generate 5-12 concrete, actionable tasks for the requested feature/version
-2. Each task should be completable in 1-4 hours of focused work
-3. Order tasks by dependency (what needs to be done first)
-4. Assign the most appropriate agent_slug based on task type:
-   - "code": Implementation, features, bug fixes, API endpoints
-   - "test": Writing tests, QA validation, test coverage
-   - "docs": Documentation, README updates, comments
-   - "refactor": Code cleanup, optimization, restructuring
-5. Do NOT include tasks that already exist (check existing_tasks)
-6. Do NOT suggest meta-tasks like "plan" or "review" - suggest concrete implementation tasks
-7. Focus on the specific feature requested, not general project improvements
-
-Your response must be EXACTLY this JSON structure (no other text):
-{
-  "tasks": [
-    {
-      "title": "Implement user login endpoint",
-      "description": "Create POST /api/auth/login endpoint with email/password validation",
-      "priority": 1,
-      "estimated_complexity": "medium",
-      "agent_slug": "code"
-    }
-  ]
-}""",
-        "color": "#ec4899",
-        "icon": "sparkles",
-        "is_default": True,
-        "sort_order": 0
-    },
-    {
-        "id": "default-code",
-        "slug": "code",
-        "name": "Code Agent",
-        "description": "General-purpose coding agent",
-        "system_prompt": "You are a skilled software engineer. Focus on writing clean, efficient, and well-documented code.",
-        "color": "#3b82f6",
-        "icon": "code",
-        "is_default": True,
-        "sort_order": 1
-    },
-    {
-        "id": "default-test",
-        "slug": "test",
-        "name": "Test Agent",
-        "description": "Test writing and QA specialist",
-        "system_prompt": "You are a QA engineer specializing in writing comprehensive tests. Focus on edge cases, error handling, and test coverage.",
-        "color": "#22c55e",
-        "icon": "check",
-        "is_default": True,
-        "sort_order": 2
-    },
-    {
-        "id": "default-docs",
-        "slug": "docs",
-        "name": "Docs Agent",
-        "description": "Documentation specialist",
-        "system_prompt": "You are a technical writer. Focus on clear, comprehensive documentation that helps developers understand the codebase.",
-        "color": "#f97316",
-        "icon": "book",
-        "is_default": True,
-        "sort_order": 3
-    },
-    {
-        "id": "default-refactor",
-        "slug": "refactor",
-        "name": "Refactor Agent",
-        "description": "Code refactoring specialist",
-        "system_prompt": "You are a code refactoring specialist. Focus on improving code structure, reducing complexity, and enhancing maintainability without changing functionality.",
-        "color": "#a855f7",
-        "icon": "refresh",
-        "is_default": True,
-        "sort_order": 4
-    }
-]
-
-
-def _generate_agent_slug(name: str) -> str:
-    """Generate a slug from a name."""
-    slug = name.lower()
-    slug = re.sub(r'[^a-z0-9\s-]', '', slug)
-    slug = re.sub(r'\s+', '-', slug)
-    slug = re.sub(r'-+', '-', slug)
-    return slug[:50].rstrip('-')
-
-
-def _save_agent_definitions():
-    """Persist custom (non-default) agent definitions to disk."""
-    try:
-        _AGENTS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        custom = {k: v for k, v in _agent_definitions.items() if not v.get("is_default")}
-        _AGENTS_FILE.write_text(json.dumps(custom, indent=2))
-    except Exception as e:
-        print(f"[Agents] Failed to save agent definitions: {e}")
-
-
-def _load_agent_definitions():
-    """Load custom agent definitions from disk, then add defaults."""
-    # Load defaults first
-    now = datetime.utcnow().isoformat()
-    for agent in DEFAULT_AGENT_DEFINITIONS:
-        _agent_definitions[agent["id"]] = {
-            **agent,
-            "created_at": now,
-            "updated_at": now
-        }
-
-    # Load custom agents from file
-    if _AGENTS_FILE.exists():
-        try:
-            custom = json.loads(_AGENTS_FILE.read_text())
-            for agent_id, agent in custom.items():
-                _agent_definitions[agent_id] = agent
-            print(f"[Agents] Loaded {len(custom)} custom agent definitions from {_AGENTS_FILE}")
-        except Exception as e:
-            print(f"[Agents] Failed to load agent definitions: {e}")
-
-
-# Initialize on import
-_load_agent_definitions()
+# Agent definitions are stored in the cloud database (public.agents table).
+# The local server does NOT maintain its own store — all CRUD goes through
+# the cloud API via MCP tools. The local apply-agent endpoint receives the
+# system_prompt and allowed_tools directly from the caller.
 
 
 # =============================================================================
@@ -784,164 +650,30 @@ Which version should be the focus for today? Prioritize versions that have work 
 # Agent Definitions
 # =============================================================================
 
-class AgentDefinitionCreate(BaseModel):
-    """Request to create an agent definition."""
-    name: str
-    slug: Optional[str] = None
-    description: Optional[str] = ""
-    system_prompt: Optional[str] = ""
-    color: Optional[str] = "#6366f1"
-    icon: Optional[str] = "bot"
-    is_default: Optional[bool] = False
-    sort_order: Optional[int] = 0
-    project_id: Optional[str] = None
-    allowed_tools: Optional[List[str]] = None
-
-
-class AgentDefinitionUpdate(BaseModel):
-    """Request to update an agent definition."""
-    name: Optional[str] = None
-    slug: Optional[str] = None
-    description: Optional[str] = None
-    system_prompt: Optional[str] = None
-    color: Optional[str] = None
-    icon: Optional[str] = None
-    is_default: Optional[bool] = None
-    sort_order: Optional[int] = None
-    allowed_tools: Optional[List[str]] = None
-
-
-@router.get("/agent-definitions")
-def list_agent_definitions(project_id: Optional[str] = None):
-    """List all agent definitions."""
-    agents = list(_agent_definitions.values())
-
-    if project_id:
-        agents = [a for a in agents if a.get("project_id") == project_id or a.get("is_default")]
-
-    agents.sort(key=lambda x: (x.get("sort_order", 0), x.get("created_at", "")))
-
-    return {"success": True, "agents": agents}
-
-
-@router.post("/agent-definitions")
-def create_agent_definition(request: AgentDefinitionCreate):
-    """Create a new agent definition."""
-    agent_id = str(uuid.uuid4())
-    slug = request.slug or _generate_agent_slug(request.name)
-    now = datetime.utcnow().isoformat()
-
-    agent = {
-        "id": agent_id,
-        "name": request.name,
-        "slug": slug,
-        "description": request.description or "",
-        "system_prompt": request.system_prompt or "",
-        "color": request.color or "#6366f1",
-        "icon": request.icon or "bot",
-        "is_default": request.is_default or False,
-        "sort_order": request.sort_order or 0,
-        "project_id": request.project_id,
-        "allowed_tools": request.allowed_tools,
-        "created_at": now,
-        "updated_at": now
-    }
-
-    _agent_definitions[agent_id] = agent
-    _save_agent_definitions()
-    return {"success": True, "agent": agent}
-
-
-@router.get("/agent-definitions/{agent_id}")
-def get_agent_definition(agent_id: str):
-    """Get a specific agent definition."""
-    agent = _agent_definitions.get(agent_id)
-    if not agent:
-        raise HTTPException(status_code=404, detail="Agent definition not found")
-    return {"success": True, "agent": agent}
-
-
-@router.put("/agent-definitions/{agent_id}")
-def update_agent_definition(agent_id: str, request: AgentDefinitionUpdate):
-    """Update an agent definition."""
-    agent = _agent_definitions.get(agent_id)
-    if not agent:
-        raise HTTPException(status_code=404, detail="Agent definition not found")
-
-    update_data = request.dict(exclude_unset=True)
-    if "name" in update_data and "slug" not in update_data:
-        update_data["slug"] = _generate_agent_slug(update_data["name"])
-
-    for key, value in update_data.items():
-        agent[key] = value
-
-    agent["updated_at"] = datetime.utcnow().isoformat()
-
-    _save_agent_definitions()
-    return {"success": True, "agent": agent}
-
-
-@router.delete("/agent-definitions/{agent_id}")
-def delete_agent_definition(agent_id: str):
-    """Delete an agent definition."""
-    if agent_id not in _agent_definitions:
-        raise HTTPException(status_code=404, detail="Agent definition not found")
-
-    agent = _agent_definitions[agent_id]
-    if agent.get("is_default") and agent["id"].startswith("default-"):
-        raise HTTPException(status_code=400, detail="Cannot delete built-in default agents")
-
-    del _agent_definitions[agent_id]
-    _save_agent_definitions()
-    return {"success": True, "deleted": agent_id}
-
-
-@router.get("/agent-definitions/by-slug/{slug}")
-def get_agent_definition_by_slug(slug: str, project_id: Optional[str] = None):
-    """Get an agent definition by slug."""
-    for agent in _agent_definitions.values():
-        if agent.get("slug") == slug:
-            if project_id and not agent.get("is_default") and agent.get("project_id") != project_id:
-                continue
-            return {"success": True, "agent": agent}
-    raise HTTPException(status_code=404, detail=f"Agent not found: {slug}")
-
-
 # =============================================================================
 # Apply Agent (run Claude with agent system prompt)
 # =============================================================================
 
 class ApplyAgentRequest(BaseModel):
-    """Request to apply an agent to execute instructions."""
-    agent_slug: str
+    """Request to apply an agent to execute instructions.
+
+    The caller (MCP tool or relay) fetches the agent from the cloud database
+    and passes system_prompt + allowed_tools directly — no local lookup needed.
+    """
     instructions: str
-    project_id: Optional[str] = None
+    system_prompt: str = ""
+    allowed_tools: Optional[List[str]] = None
     working_dir: Optional[str] = None
+    agent_slug: Optional[str] = None  # For logging only
 
 
 @router.post("/apply-agent")
 async def apply_agent(request: ApplyAgentRequest):
     """Run Claude CLI with an agent's system prompt and user instructions.
 
-    Looks up the agent by slug, prepends the agent's system_prompt to the
-    user instructions, and runs Claude in one-shot mode.
+    The system_prompt and allowed_tools are provided by the caller, who
+    already fetched them from the cloud database.
     """
-    # Find agent by slug
-    agent = None
-    for a in _agent_definitions.values():
-        if a.get("slug") == request.agent_slug:
-            if request.project_id and not a.get("is_default") and a.get("project_id") != request.project_id:
-                continue
-            agent = a
-            break
-
-    if not agent:
-        available = [a.get("slug") for a in _agent_definitions.values()]
-        raise HTTPException(
-            status_code=404,
-            detail=f"Agent not found: {request.agent_slug}. Available: {', '.join(available)}"
-        )
-
     claude_path = shutil.which("claude")
     if not claude_path:
         raise HTTPException(
@@ -950,8 +682,9 @@ async def apply_agent(request: ApplyAgentRequest):
         )
 
     # Build prompt: system prompt + instructions
-    system_prompt = agent.get("system_prompt", "")
-    full_prompt = f"""{system_prompt}
+    full_prompt = request.instructions
+    if request.system_prompt:
+        full_prompt = f"""{request.system_prompt}
 
 ---
 
@@ -971,9 +704,8 @@ async def apply_agent(request: ApplyAgentRequest):
         ]
 
         # Restrict tools if agent has allowed_tools configured
-        allowed_tools = agent.get("allowed_tools")
-        if allowed_tools is not None and len(allowed_tools) > 0:
-            cmd.extend(["--allowedTools", ",".join(allowed_tools)])
+        if request.allowed_tools is not None and len(request.allowed_tools) > 0:
+            cmd.extend(["--allowedTools", ",".join(request.allowed_tools)])
 
         result = subprocess.run(
             cmd,
@@ -1005,7 +737,6 @@ async def apply_agent(request: ApplyAgentRequest):
         return {
             "success": True,
             "agent_slug": request.agent_slug,
-            "agent_name": agent.get("name"),
             "output": output_text
         }
 
