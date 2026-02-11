@@ -864,3 +864,119 @@ def delete_agent_definition(agent_id: str):
 
     del _agent_definitions[agent_id]
     return {"success": True, "deleted": agent_id}
+
+
+@router.get("/agent-definitions/by-slug/{slug}")
+def get_agent_definition_by_slug(slug: str, project_id: Optional[str] = None):
+    """Get an agent definition by slug."""
+    for agent in _agent_definitions.values():
+        if agent.get("slug") == slug:
+            if project_id and not agent.get("is_default") and agent.get("project_id") != project_id:
+                continue
+            return {"success": True, "agent": agent}
+    raise HTTPException(status_code=404, detail=f"Agent not found: {slug}")
+
+
+# =============================================================================
+# Apply Agent (run Claude with agent system prompt)
+# =============================================================================
+
+class ApplyAgentRequest(BaseModel):
+    """Request to apply an agent to execute instructions."""
+    agent_slug: str
+    instructions: str
+    project_id: Optional[str] = None
+    working_dir: Optional[str] = None
+
+
+@router.post("/apply-agent")
+async def apply_agent(request: ApplyAgentRequest):
+    """Run Claude CLI with an agent's system prompt and user instructions.
+
+    Looks up the agent by slug, prepends the agent's system_prompt to the
+    user instructions, and runs Claude in one-shot mode.
+    """
+    # Find agent by slug
+    agent = None
+    for a in _agent_definitions.values():
+        if a.get("slug") == request.agent_slug:
+            if request.project_id and not a.get("is_default") and a.get("project_id") != request.project_id:
+                continue
+            agent = a
+            break
+
+    if not agent:
+        available = [a.get("slug") for a in _agent_definitions.values()]
+        raise HTTPException(
+            status_code=404,
+            detail=f"Agent not found: {request.agent_slug}. Available: {', '.join(available)}"
+        )
+
+    claude_path = shutil.which("claude")
+    if not claude_path:
+        raise HTTPException(
+            status_code=400,
+            detail="Claude Code CLI not found. Install with: npm install -g @anthropic-ai/claude-code"
+        )
+
+    # Build prompt: system prompt + instructions
+    system_prompt = agent.get("system_prompt", "")
+    full_prompt = f"""{system_prompt}
+
+---
+
+{request.instructions}"""
+
+    work_dir = request.working_dir or get_default_working_dir()
+
+    try:
+        env = os.environ.copy()
+        env.pop("ANTHROPIC_API_KEY", None)
+
+        cmd = [
+            "claude",
+            "-p", full_prompt,
+            "--output-format", "json",
+            "--dangerously-skip-permissions"
+        ]
+
+        result = subprocess.run(
+            cmd,
+            cwd=work_dir,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120
+        )
+
+        if result.returncode != 0:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Claude CLI error: {result.stderr[:500]}"
+            )
+
+        output = result.stdout.strip()
+
+        # Parse JSON output from Claude
+        try:
+            response_data = json.loads(output)
+            if "result" in response_data:
+                output_text = response_data["result"]
+            else:
+                output_text = output
+        except json.JSONDecodeError:
+            output_text = output
+
+        return {
+            "success": True,
+            "agent_slug": request.agent_slug,
+            "agent_name": agent.get("name"),
+            "output": output_text
+        }
+
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Agent execution timed out (120s)")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
