@@ -37,6 +37,7 @@ class LocalAgent:
     branch: Optional[str]
     branch_created: bool
     status: str  # prepared, starting, running, paused, completed, failed, stopped
+    system_prompt: Optional[str] = None
     pid: Optional[int] = None
     process: Optional[subprocess.Popen] = None
     output_buffer: List[str] = field(default_factory=list)
@@ -106,7 +107,8 @@ class LocalAgentManager:
         prompt: Optional[str] = None,
         skip_branch: bool = False,
         branch: Optional[str] = None,
-        defer_start: bool = False
+        defer_start: bool = False,
+        system_prompt: Optional[str] = None
     ) -> dict:
         """Create and optionally start a new local Claude Code agent.
 
@@ -186,7 +188,8 @@ class LocalAgentManager:
                 worktree_path=worktree_path,
                 branch=target_branch,
                 branch_created=branch_created,
-                status="prepared"
+                status="prepared",
+                system_prompt=system_prompt
             )
             self._agents[agent_id] = agent
             print(f"[LocalAgent] Session prepared (deferred start): {agent_id}")
@@ -206,7 +209,7 @@ class LocalAgentManager:
             }
 
         # Build prompt and spawn CLI process immediately
-        final_prompt = self._build_prompt(prompt, task_id, task_number, task_title, task_description, target_branch, worktree_path)
+        final_prompt = self._build_prompt(prompt, task_id, task_number, task_title, task_description, target_branch, worktree_path, system_prompt)
 
         agent = LocalAgent(
             id=agent_id,
@@ -219,7 +222,8 @@ class LocalAgentManager:
             worktree_path=worktree_path,
             branch=target_branch,
             branch_created=branch_created,
-            status="starting"
+            status="starting",
+            system_prompt=system_prompt
         )
 
         self._agents[agent_id] = agent
@@ -253,13 +257,20 @@ class LocalAgentManager:
         task_title: str,
         task_description: Optional[str],
         target_branch: Optional[str],
-        worktree_path: Optional[str]
+        worktree_path: Optional[str],
+        system_prompt: Optional[str] = None
     ) -> str:
-        """Build the final prompt, prepending worktree info if applicable."""
+        """Build the final prompt, prepending system prompt and worktree info if applicable."""
+        parts = []
+
+        # Prepend agent system prompt if provided
+        if system_prompt:
+            parts.append(system_prompt)
+            parts.append("\n---\n")
+
         if prompt:
-            final_prompt = prompt
             if worktree_path:
-                worktree_info = f"""## IMPORTANT: Worktree Already Created
+                parts.append(f"""## IMPORTANT: Worktree Already Created
 You are working in an isolated git worktree at: `{worktree_path}`
 Branch: `{target_branch}`
 
@@ -267,9 +278,8 @@ Do NOT create another worktree - you are already isolated. Skip any worktree cre
 
 ---
 
-"""
-                final_prompt = worktree_info + final_prompt
-            return final_prompt
+""")
+            parts.append(prompt)
         else:
             task_json = {
                 "task_uuid": task_id,
@@ -279,11 +289,13 @@ Do NOT create another worktree - you are already isolated. Skip any worktree cre
                 "branch": target_branch,
                 "worktree_path": str(worktree_path) if worktree_path else None
             }
-            return f"""Please start working on this task:
+            parts.append(f"""Please start working on this task:
 
 ```json
 {json.dumps(task_json, indent=2)}
-```"""
+```""")
+
+        return "\n".join(parts)
 
     def _start_cli_process(self, agent: LocalAgent, final_prompt: str) -> None:
         """Spawn the Claude CLI process and start reading output."""
@@ -331,11 +343,12 @@ Do NOT create another worktree - you are already isolated. Skip any worktree cre
         if agent.status != "prepared":
             raise HTTPException(status_code=400, detail=f"Agent is not in prepared state (status: {agent.status})")
 
-        # Build the final prompt with worktree context + user message
+        # Build the final prompt with worktree context + user message + system prompt
         final_prompt = self._build_prompt(
             message, agent.task_id, agent.task_number,
             agent.task_title, agent.task_description,
-            agent.branch, agent.worktree_path
+            agent.branch, agent.worktree_path,
+            agent.system_prompt
         )
 
         print(f"[LocalAgent] Spawning CLI for prepared session {agent_id}")

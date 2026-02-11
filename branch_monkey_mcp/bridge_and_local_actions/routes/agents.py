@@ -30,6 +30,7 @@ class CreateAgentRequest(BaseModel):
     skip_branch: bool = False
     branch: Optional[str] = None
     defer_start: bool = False
+    system_prompt: Optional[str] = None
 
 
 class TaskExecuteRequest(BaseModel):
@@ -145,7 +146,8 @@ async def create_agent(request: CreateAgentRequest):
         prompt=request.prompt,
         skip_branch=request.skip_branch,
         branch=request.branch,
-        defer_start=request.defer_start
+        defer_start=request.defer_start,
+        system_prompt=request.system_prompt
     )
 
 

@@ -25,18 +25,33 @@ def monkey_agent_list() -> str:
         agents = result.get("agents", [])
 
         if not agents:
-            return f"No agents found for project **{state.CURRENT_PROJECT_NAME}**."
+            return f"No agents found for project **{state.CURRENT_PROJECT_NAME}**.\n\nCreate one with `monkey_agent_create(name, system_prompt)`."
 
         output = f"# Agent Definitions (Project: {state.CURRENT_PROJECT_NAME})\n\n"
         for a in agents:
-            is_default = "✓" if a.get('is_default') else ""
+            is_default = " [built-in]" if a.get('is_default') else ""
             tools_info = ""
             if a.get('allowed_tools') is not None:
                 tool_count = len(a.get('allowed_tools', []))
-                tools_info = f" | {tool_count} tools enabled"
-            output += f"- **{a.get('name')}** (`{a.get('slug')}`) {is_default}{tools_info}\n"
-            output += f"   {a.get('description', '')}\n"
-            output += f"   Color: {a.get('color', '#6366f1')} | ID: `{a.get('id')}`\n\n"
+                tools_info = f" | {tool_count} tools"
+
+            output += f"### {a.get('name')} (`{a.get('slug')}`){is_default}{tools_info}\n"
+            if a.get('description'):
+                output += f"{a.get('description')}\n"
+
+            # Show system prompt preview (first 100 chars)
+            prompt = a.get('system_prompt', '')
+            if prompt:
+                preview = prompt[:100].replace('\n', ' ')
+                if len(prompt) > 100:
+                    preview += "..."
+                output += f"Prompt: _{preview}_\n"
+
+            output += f"ID: `{a.get('id')}`\n\n"
+
+        output += "---\n"
+        output += "Use `monkey_apply_agent(agent_slug, instructions)` to run an agent.\n"
+        output += "Use `monkey_agent_get(agent_id)` to see full system prompt.\n"
 
         return output
     except Exception as e:
@@ -89,27 +104,39 @@ def monkey_agent_create(
 
 @mcp.tool()
 def monkey_agent_get(agent_id: str) -> str:
-    """Get a specific agent definition by ID.
+    """Get a specific agent definition by ID or slug.
 
     Args:
-        agent_id: The UUID of the agent to retrieve
+        agent_id: The UUID or slug of the agent to retrieve (e.g., "planner" or "abc-def-123")
     """
     try:
-        result = api_get(f"/api/agent-definitions/{agent_id}")
-        agent = result.get("agent", {})
+        # Try by ID first
+        try:
+            result = api_get(f"/api/agent-definitions/{agent_id}")
+            agent = result.get("agent", {})
+        except Exception:
+            agent = None
+
+        # If not found by ID, try by slug
+        if not agent:
+            endpoint = f"/api/agent-definitions?project_id={state.CURRENT_PROJECT_ID}" if state.CURRENT_PROJECT_ID else "/api/agent-definitions"
+            result = api_get(endpoint)
+            agents = result.get("agents", [])
+            for a in agents:
+                if a.get("slug") == agent_id:
+                    agent = a
+                    break
 
         if not agent:
-            return f"❌ Agent not found: {agent_id}"
+            return f"❌ Agent not found: `{agent_id}`"
 
         output = f"# Agent: {agent.get('name')}\n\n"
-        output += f"**ID:** `{agent.get('id')}`\n"
         output += f"**Slug:** `{agent.get('slug')}`\n"
+        output += f"**ID:** `{agent.get('id')}`\n"
         output += f"**Description:** {agent.get('description', 'N/A')}\n"
         output += f"**Color:** {agent.get('color', '#6366f1')}\n"
         output += f"**Icon:** {agent.get('icon', 'bot')}\n"
-        output += f"**Default:** {'Yes' if agent.get('is_default') else 'No'}\n"
-        output += f"**Created:** {agent.get('created_at', '')[:19]}\n"
-        output += f"**Updated:** {agent.get('updated_at', '')[:19]}\n\n"
+        output += f"**Default:** {'Yes' if agent.get('is_default') else 'No'}\n\n"
 
         # Tool access info
         allowed_tools = agent.get('allowed_tools')
@@ -205,8 +232,8 @@ def monkey_apply_agent(
 ) -> str:
     """Apply an agent to execute custom instructions.
 
-    Fetches the agent's system prompt from the database and executes it
-    with the provided instructions via the local relay.
+    Fetches the agent's system prompt and runs Claude with it.
+    Tries the local server first (faster), falls back to cloud relay.
 
     Args:
         agent_slug: The agent slug (e.g., "planner", "code", "test", "docs", "refactor")
@@ -240,26 +267,55 @@ def monkey_apply_agent(
                 break
 
         if not agent:
-            return f"❌ Agent not found: {agent_slug}\n\nAvailable agents: {', '.join(a.get('slug', '') for a in agents)}"
+            available = ', '.join(a.get('slug', '') for a in agents)
+            return f"❌ Agent not found: `{agent_slug}`\n\nAvailable agents: {available}"
 
-        # Build payload for relay
+        # Add context to instructions if provided
+        full_instructions = instructions
+        if context:
+            try:
+                parsed_context = json.loads(context) if isinstance(context, str) else context
+                full_instructions = f"{instructions}\n\nContext:\n```json\n{json.dumps(parsed_context, indent=2)}\n```"
+            except json.JSONDecodeError:
+                full_instructions = f"{instructions}\n\nContext: {context}"
+
+        # Try local server first (faster, no relay round-trip)
+        local_url = f"http://localhost:{state.LOCAL_SERVER_PORT}" if hasattr(state, 'LOCAL_SERVER_PORT') else "http://localhost:18081"
+        try:
+            import requests
+            local_response = requests.post(
+                f"{local_url}/api/local-claude/apply-agent",
+                json={
+                    "agent_slug": agent_slug,
+                    "instructions": full_instructions,
+                    "project_id": state.CURRENT_PROJECT_ID
+                },
+                timeout=130
+            )
+            if local_response.status_code == 200:
+                local_result = local_response.json()
+                output = local_result.get("output", "")
+                return f"""# Agent: {agent.get('name')} (`{agent_slug}`)
+
+## Instructions
+{instructions}
+
+## Response
+{output}
+"""
+        except Exception:
+            pass  # Local server not available, fall back to cloud relay
+
+        # Fall back to cloud relay
         payload = {
             "agent_id": agent.get("id"),
             "agent_slug": agent_slug,
             "agent_name": agent.get("name"),
             "system_prompt": agent.get("system_prompt"),
-            "instructions": instructions,
+            "instructions": full_instructions,
             "project_id": state.CURRENT_PROJECT_ID
         }
 
-        # Parse and add context if provided
-        if context:
-            try:
-                payload["context"] = json.loads(context) if isinstance(context, str) else context
-            except json.JSONDecodeError:
-                payload["context"] = {"raw": context}
-
-        # Send to relay for execution
         result = api_post("/api/relay/apply-agent", payload)
 
         if result.get("error"):
@@ -267,7 +323,7 @@ def monkey_apply_agent(
 
         output = result.get("output", result.get("result", ""))
 
-        return f"""# Agent: {agent.get('name')} ({agent_slug})
+        return f"""# Agent: {agent.get('name')} (`{agent_slug}`)
 
 ## Instructions
 {instructions}
