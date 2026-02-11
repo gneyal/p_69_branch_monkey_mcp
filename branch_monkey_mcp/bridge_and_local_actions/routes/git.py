@@ -8,11 +8,27 @@ import time
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from ..config import get_default_working_dir
 from ..git_utils import is_git_repo, get_git_root, get_current_branch
 
 router = APIRouter()
+
+
+class PushRequest(BaseModel):
+    path: Optional[str] = None
+    branch: Optional[str] = None
+
+
+class PullRequest(BaseModel):
+    path: Optional[str] = None
+
+
+class TagRequest(BaseModel):
+    path: Optional[str] = None
+    tag_name: str
+    commit_sha: str
 
 
 @router.get("/git-status")
@@ -576,5 +592,114 @@ def list_stash():
                 })
 
         return {"stashes": stashes, "count": len(stashes)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/local-claude/push")
+def git_push(req: PushRequest):
+    """Push commits to remote."""
+    work_dir = req.path or get_default_working_dir()
+    git_root = get_git_root(work_dir)
+    if not git_root:
+        raise HTTPException(status_code=400, detail="Not in a git repository")
+
+    try:
+        cmd = ["git", "push"]
+        if req.branch:
+            cmd += ["origin", req.branch]
+
+        result = subprocess.run(
+            cmd,
+            cwd=git_root,
+            capture_output=True,
+            text=True
+        )
+
+        if result.returncode != 0:
+            raise HTTPException(status_code=400, detail=result.stderr.strip())
+
+        return {
+            "success": True,
+            "message": result.stderr.strip() or "Pushed successfully"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/local-claude/pull")
+def git_pull(req: PullRequest):
+    """Pull commits from remote."""
+    work_dir = req.path or get_default_working_dir()
+    git_root = get_git_root(work_dir)
+    if not git_root:
+        raise HTTPException(status_code=400, detail="Not in a git repository")
+
+    try:
+        result = subprocess.run(
+            ["git", "pull"],
+            cwd=git_root,
+            capture_output=True,
+            text=True
+        )
+
+        if result.returncode != 0:
+            raise HTTPException(status_code=400, detail=result.stderr.strip())
+
+        return {
+            "success": True,
+            "message": result.stdout.strip() or "Pulled successfully"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/local-claude/tag")
+def git_tag(req: TagRequest):
+    """Create a tag on a specific commit and push it."""
+    work_dir = req.path or get_default_working_dir()
+    git_root = get_git_root(work_dir)
+    if not git_root:
+        raise HTTPException(status_code=400, detail="Not in a git repository")
+
+    try:
+        # Create the tag
+        result = subprocess.run(
+            ["git", "tag", req.tag_name, req.commit_sha],
+            cwd=git_root,
+            capture_output=True,
+            text=True
+        )
+
+        if result.returncode != 0:
+            raise HTTPException(status_code=400, detail=result.stderr.strip())
+
+        # Push the tag to remote
+        push_result = subprocess.run(
+            ["git", "push", "origin", req.tag_name],
+            cwd=git_root,
+            capture_output=True,
+            text=True
+        )
+
+        if push_result.returncode != 0:
+            # Tag was created locally but push failed — report both
+            return {
+                "success": True,
+                "message": f"Tag '{req.tag_name}' created locally but push failed: {push_result.stderr.strip()}",
+                "pushed": False
+            }
+
+        return {
+            "success": True,
+            "message": f"Tag '{req.tag_name}' created and pushed",
+            "pushed": True
+        }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
