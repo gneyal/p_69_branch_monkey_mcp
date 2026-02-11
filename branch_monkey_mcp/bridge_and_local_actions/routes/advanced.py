@@ -28,8 +28,11 @@ _time_machine_previews: Dict[str, dict] = {}
 _time_machine_tunnels: Dict[str, object] = {}  # Track ngrok tunnels for time machine
 TIME_MACHINE_BASE_PORT = 6100
 
-# Track agent definitions
+# Track agent definitions (persisted to file)
 _agent_definitions: Dict[str, dict] = {}
+
+# File path for persisting custom agent definitions
+_AGENTS_FILE = Path.home() / ".branch-monkey" / "agent-definitions.json"
 
 # Default agent definitions
 DEFAULT_AGENT_DEFINITIONS = [
@@ -128,19 +131,40 @@ def _generate_agent_slug(name: str) -> str:
     return slug[:50].rstrip('-')
 
 
-def _init_default_agent_definitions():
-    """Initialize default agent definitions if not already present."""
+def _save_agent_definitions():
+    """Persist custom (non-default) agent definitions to disk."""
+    try:
+        _AGENTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        custom = {k: v for k, v in _agent_definitions.items() if not v.get("is_default")}
+        _AGENTS_FILE.write_text(json.dumps(custom, indent=2))
+    except Exception as e:
+        print(f"[Agents] Failed to save agent definitions: {e}")
+
+
+def _load_agent_definitions():
+    """Load custom agent definitions from disk, then add defaults."""
+    # Load defaults first
+    now = datetime.utcnow().isoformat()
     for agent in DEFAULT_AGENT_DEFINITIONS:
-        if agent["id"] not in _agent_definitions:
-            _agent_definitions[agent["id"]] = {
-                **agent,
-                "created_at": datetime.utcnow().isoformat(),
-                "updated_at": datetime.utcnow().isoformat()
-            }
+        _agent_definitions[agent["id"]] = {
+            **agent,
+            "created_at": now,
+            "updated_at": now
+        }
+
+    # Load custom agents from file
+    if _AGENTS_FILE.exists():
+        try:
+            custom = json.loads(_AGENTS_FILE.read_text())
+            for agent_id, agent in custom.items():
+                _agent_definitions[agent_id] = agent
+            print(f"[Agents] Loaded {len(custom)} custom agent definitions from {_AGENTS_FILE}")
+        except Exception as e:
+            print(f"[Agents] Failed to load agent definitions: {e}")
 
 
-# Initialize defaults on import
-_init_default_agent_definitions()
+# Initialize on import
+_load_agent_definitions()
 
 
 # =============================================================================
@@ -771,6 +795,7 @@ class AgentDefinitionCreate(BaseModel):
     is_default: Optional[bool] = False
     sort_order: Optional[int] = 0
     project_id: Optional[str] = None
+    allowed_tools: Optional[List[str]] = None
 
 
 class AgentDefinitionUpdate(BaseModel):
@@ -783,6 +808,7 @@ class AgentDefinitionUpdate(BaseModel):
     icon: Optional[str] = None
     is_default: Optional[bool] = None
     sort_order: Optional[int] = None
+    allowed_tools: Optional[List[str]] = None
 
 
 @router.get("/agent-definitions")
@@ -816,11 +842,13 @@ def create_agent_definition(request: AgentDefinitionCreate):
         "is_default": request.is_default or False,
         "sort_order": request.sort_order or 0,
         "project_id": request.project_id,
+        "allowed_tools": request.allowed_tools,
         "created_at": now,
         "updated_at": now
     }
 
     _agent_definitions[agent_id] = agent
+    _save_agent_definitions()
     return {"success": True, "agent": agent}
 
 
@@ -849,6 +877,7 @@ def update_agent_definition(agent_id: str, request: AgentDefinitionUpdate):
 
     agent["updated_at"] = datetime.utcnow().isoformat()
 
+    _save_agent_definitions()
     return {"success": True, "agent": agent}
 
 
@@ -863,6 +892,7 @@ def delete_agent_definition(agent_id: str):
         raise HTTPException(status_code=400, detail="Cannot delete built-in default agents")
 
     del _agent_definitions[agent_id]
+    _save_agent_definitions()
     return {"success": True, "deleted": agent_id}
 
 
@@ -939,6 +969,11 @@ async def apply_agent(request: ApplyAgentRequest):
             "--output-format", "json",
             "--dangerously-skip-permissions"
         ]
+
+        # Restrict tools if agent has allowed_tools configured
+        allowed_tools = agent.get("allowed_tools")
+        if allowed_tools is not None and len(allowed_tools) > 0:
+            cmd.extend(["--allowedTools", ",".join(allowed_tools)])
 
         result = subprocess.run(
             cmd,

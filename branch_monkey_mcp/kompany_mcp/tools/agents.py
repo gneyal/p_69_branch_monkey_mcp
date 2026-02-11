@@ -225,6 +225,64 @@ def monkey_agent_delete(agent_id: str) -> str:
 
 
 @mcp.tool()
+def monkey_agent_clone(
+    agent_id: str,
+    new_name: str = None
+) -> str:
+    """Clone an existing agent definition to create a customized copy.
+
+    Creates a new agent with the same system prompt, description, and settings
+    as the source agent. Useful for creating variations of built-in agents.
+
+    Args:
+        agent_id: The UUID or slug of the agent to clone
+        new_name: Optional name for the clone (defaults to "Copy of <original>")
+    """
+    if not state.CURRENT_PROJECT_ID:
+        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
+
+    try:
+        # Find source agent by ID or slug
+        source = None
+        try:
+            result = api_get(f"/api/agent-definitions/{agent_id}")
+            source = result.get("agent")
+        except Exception:
+            pass
+
+        if not source:
+            endpoint = f"/api/agent-definitions?project_id={state.CURRENT_PROJECT_ID}"
+            result = api_get(endpoint)
+            for a in result.get("agents", []):
+                if a.get("slug") == agent_id:
+                    source = a
+                    break
+
+        if not source:
+            return f"❌ Agent not found: `{agent_id}`"
+
+        name = new_name or f"Copy of {source.get('name', 'Agent')}"
+
+        payload = {
+            "name": name,
+            "system_prompt": source.get("system_prompt", ""),
+            "description": source.get("description", ""),
+            "color": source.get("color", "#6366f1"),
+            "icon": source.get("icon", "bot"),
+            "project_id": state.CURRENT_PROJECT_ID
+        }
+
+        if source.get("allowed_tools") is not None:
+            payload["allowed_tools"] = source["allowed_tools"]
+
+        result = api_post("/api/agent-definitions", payload)
+        clone = result.get("agent", result)
+        return f"✅ Cloned agent: **{name}** (slug: `{clone.get('slug')}`, ID: `{clone.get('id')}`)\n\nCloned from: {source.get('name')} (`{source.get('slug')}`)"
+    except Exception as e:
+        return f"Error cloning agent: {str(e)}"
+
+
+@mcp.tool()
 def monkey_apply_agent(
     agent_slug: str,
     instructions: str,
@@ -232,8 +290,8 @@ def monkey_apply_agent(
 ) -> str:
     """Apply an agent to execute custom instructions.
 
-    Fetches the agent's system prompt and runs Claude with it.
-    Tries the local server first (faster), falls back to cloud relay.
+    Fetches the agent's system prompt from the database and executes it
+    with the provided instructions via the local relay.
 
     Args:
         agent_slug: The agent slug (e.g., "planner", "code", "test", "docs", "refactor")
@@ -254,20 +312,28 @@ def monkey_apply_agent(
         return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
 
     try:
-        # Fetch agent by slug from database
-        endpoint = f"/api/agent-definitions?project_id={state.CURRENT_PROJECT_ID}"
-        result = api_get(endpoint)
-        agents = result.get("agents", [])
-
-        # Find agent by slug
+        # Fetch agent by slug - try by-slug endpoint first, then fall back to listing
         agent = None
-        for a in agents:
-            if a.get("slug") == agent_slug:
-                agent = a
-                break
+        try:
+            result = api_get(f"/api/agent-definitions/by-slug/{agent_slug}?project_id={state.CURRENT_PROJECT_ID}")
+            agent = result.get("agent")
+        except Exception:
+            # Fall back to listing all agents
+            endpoint = f"/api/agent-definitions?project_id={state.CURRENT_PROJECT_ID}"
+            result = api_get(endpoint)
+            agents = result.get("agents", [])
+            for a in agents:
+                if a.get("slug") == agent_slug:
+                    agent = a
+                    break
 
         if not agent:
-            available = ', '.join(a.get('slug', '') for a in agents)
+            # List available agents for helpful error
+            try:
+                all_result = api_get(f"/api/agent-definitions?project_id={state.CURRENT_PROJECT_ID}")
+                available = ', '.join(a.get('slug', '') for a in all_result.get("agents", []))
+            except Exception:
+                available = "unknown"
             return f"❌ Agent not found: `{agent_slug}`\n\nAvailable agents: {available}"
 
         # Add context to instructions if provided
@@ -303,8 +369,17 @@ def monkey_apply_agent(
 ## Response
 {output}
 """
+            elif local_response.status_code == 504:
+                return f"❌ Agent `{agent_slug}` timed out after 120s. Try a simpler instruction or break the task down."
+            elif local_response.status_code != 200:
+                # Non-200 from local server - try cloud relay
+                pass
+        except requests.exceptions.ConnectionError:
+            pass  # Local server not running, fall back to cloud relay
+        except requests.exceptions.Timeout:
+            return f"❌ Agent `{agent_slug}` timed out. The local server didn't respond within 130s."
         except Exception:
-            pass  # Local server not available, fall back to cloud relay
+            pass  # Other error, fall back to cloud relay
 
         # Fall back to cloud relay
         payload = {

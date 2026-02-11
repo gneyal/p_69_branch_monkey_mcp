@@ -38,6 +38,7 @@ class LocalAgent:
     branch_created: bool
     status: str  # prepared, starting, running, paused, completed, failed, stopped
     system_prompt: Optional[str] = None
+    allowed_tools: Optional[List[str]] = None
     pid: Optional[int] = None
     process: Optional[subprocess.Popen] = None
     output_buffer: List[str] = field(default_factory=list)
@@ -108,7 +109,8 @@ class LocalAgentManager:
         skip_branch: bool = False,
         branch: Optional[str] = None,
         defer_start: bool = False,
-        system_prompt: Optional[str] = None
+        system_prompt: Optional[str] = None,
+        allowed_tools: Optional[List[str]] = None
     ) -> dict:
         """Create and optionally start a new local Claude Code agent.
 
@@ -189,7 +191,8 @@ class LocalAgentManager:
                 branch=target_branch,
                 branch_created=branch_created,
                 status="prepared",
-                system_prompt=system_prompt
+                system_prompt=system_prompt,
+                allowed_tools=allowed_tools
             )
             self._agents[agent_id] = agent
             print(f"[LocalAgent] Session prepared (deferred start): {agent_id}")
@@ -223,7 +226,8 @@ class LocalAgentManager:
             branch=target_branch,
             branch_created=branch_created,
             status="starting",
-            system_prompt=system_prompt
+            system_prompt=system_prompt,
+            allowed_tools=allowed_tools
         )
 
         self._agents[agent_id] = agent
@@ -309,6 +313,10 @@ Do NOT create another worktree - you are already isolated. Skip any worktree cre
             "--verbose",
             "--dangerously-skip-permissions"
         ]
+
+        # Restrict tools if agent has allowed_tools configured
+        if agent.allowed_tools is not None and len(agent.allowed_tools) > 0:
+            cmd.extend(["--allowedTools", ",".join(agent.allowed_tools)])
 
         process = subprocess.Popen(
             cmd,

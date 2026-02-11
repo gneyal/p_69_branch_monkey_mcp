@@ -31,6 +31,7 @@ class CreateAgentRequest(BaseModel):
     branch: Optional[str] = None
     defer_start: bool = False
     system_prompt: Optional[str] = None
+    allowed_tools: Optional[List[str]] = None
 
 
 class TaskExecuteRequest(BaseModel):
@@ -41,6 +42,7 @@ class TaskExecuteRequest(BaseModel):
     description: Optional[str] = None
     local_path: Optional[str] = None
     repository_url: Optional[str] = None
+    agent_slug: Optional[str] = None
 
 
 class ImageData(BaseModel):
@@ -107,6 +109,16 @@ async def execute_task(request: TaskExecuteRequest):
     print(f"[TaskExecute] Starting task #{request.task_number}: {request.title}")
     print(f"[TaskExecute] Working directory: {working_dir}")
 
+    # Look up agent definition system_prompt if agent_slug is provided
+    system_prompt = None
+    if request.agent_slug:
+        from .advanced import _agent_definitions
+        for a in _agent_definitions.values():
+            if a.get("slug") == request.agent_slug:
+                system_prompt = a.get("system_prompt")
+                print(f"[TaskExecute] Using agent: {a.get('name')} ({request.agent_slug})")
+                break
+
     # Build the prompt with task info
     prompt = f"Work on task #{request.task_number}: {request.title}"
     if request.description:
@@ -119,7 +131,8 @@ async def execute_task(request: TaskExecuteRequest):
         task_title=request.title,
         task_description=request.description,
         working_dir=working_dir,
-        prompt=prompt
+        prompt=prompt,
+        system_prompt=system_prompt
     )
 
     return {
@@ -147,7 +160,8 @@ async def create_agent(request: CreateAgentRequest):
         skip_branch=request.skip_branch,
         branch=request.branch,
         defer_start=request.defer_start,
-        system_prompt=request.system_prompt
+        system_prompt=request.system_prompt,
+        allowed_tools=request.allowed_tools
     )
 
 
