@@ -4,6 +4,7 @@ Git status and commit endpoints for the local server.
 
 import os
 import subprocess
+import time
 from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException
@@ -213,9 +214,68 @@ def get_branch_graph(limit: int = 50, path: Optional[str] = None):
                     "color": color
                 }
 
-        # Get commits with parent info - format: hash|parents|refs|message|author|date
+        # Filter out branches already merged into main/master
+        main_ref = "main" if "main" in branches else ("master" if "master" in branches else None)
+        merged_branches = set()
+        if main_ref:
+            merged_result = subprocess.run(
+                ["git", "branch", "-a", "--merged", main_ref, "--format=%(refname:short)"],
+                cwd=git_root,
+                capture_output=True,
+                text=True
+            )
+            if merged_result.returncode == 0:
+                for line in merged_result.stdout.strip().split('\n'):
+                    name = line.strip()
+                    if name and name not in (main_ref, f"origin/{main_ref}", "origin/HEAD"):
+                        if name.startswith('origin/'):
+                            merged_branches.add(name.replace('origin/', '', 1))
+                        merged_branches.add(name)
+
+            # Remove merged branches from the dict
+            for name in list(branches.keys()):
+                if name in merged_branches or name.replace('origin/', '', 1) in merged_branches:
+                    if name not in ('main', 'master'):
+                        del branches[name]
+
+        # Also filter stale task branches (catches squash-merged branches).
+        # Get committer date for each branch tip in a single git call.
+        STALE_DAYS = 14
+        stale_cutoff = int(time.time()) - (STALE_DAYS * 86400)
+
+        dates_result = subprocess.run(
+            ["git", "for-each-ref", "--format=%(refname:short)|%(committerdate:unix)",
+             "refs/heads/", "refs/remotes/"],
+            cwd=git_root,
+            capture_output=True,
+            text=True
+        )
+        branch_dates = {}
+        for line in dates_result.stdout.strip().split('\n'):
+            if '|' in line:
+                parts = line.split('|', 1)
+                try:
+                    branch_dates[parts[0]] = int(parts[1])
+                except (ValueError, IndexError):
+                    pass
+
+        for name in list(branches.keys()):
+            if name in ('main', 'master'):
+                continue
+            # Only apply staleness filter to task branches
+            if not (name.startswith('task/') or name.startswith('task-')):
+                continue
+            commit_date = branch_dates.get(name, 0)
+            if commit_date < stale_cutoff:
+                merged_branches.add(name)
+                del branches[name]
+
+        # Get commits only for the branches we kept (not --all)
+        log_cmd = ["git", "log", f"-{limit}", "--pretty=format:%H|%P|%D|%s|%an|%ar|%ai", "--topo-order"]
+        for b in branches:
+            log_cmd.append(b)
         commits_result = subprocess.run(
-            ["git", "log", f"-{limit}", "--all", "--pretty=format:%H|%P|%D|%s|%an|%ar|%ai", "--topo-order"],
+            log_cmd,
             cwd=git_root,
             capture_output=True,
             text=True
@@ -254,6 +314,9 @@ def get_branch_graph(limit: int = 50, path: Optional[str] = None):
 
                         if 'main' in ref or 'master' in ref:
                             is_main = True
+
+                # Filter out merged branches from commit refs
+                branch_refs = [b for b in branch_refs if b not in merged_branches]
 
                 commits.append({
                     "hash": sha,
@@ -306,11 +369,35 @@ def get_branch_graph(limit: int = 50, path: Optional[str] = None):
                 commit['lane'] = 0  # Default to main lane
                 commit['color'] = '#6b7280'  # Gray for non-tip commits
 
+        # Get remote URL for repo identification
+        remote_url = None
+        repo_name = os.path.basename(git_root)
+        try:
+            remote_result = subprocess.run(
+                ["git", "remote", "get-url", "origin"],
+                cwd=git_root,
+                capture_output=True,
+                text=True
+            )
+            if remote_result.returncode == 0:
+                remote_url = remote_result.stdout.strip()
+                # Extract repo name from URL (e.g. "org/repo" from github.com/org/repo.git)
+                if remote_url:
+                    clean = remote_url.rstrip('/').removesuffix('.git')
+                    parts = clean.split('/')
+                    if len(parts) >= 2:
+                        repo_name = '/'.join(parts[-2:])
+        except Exception:
+            pass
+
         return {
             "branches": list(branches.values()),
             "commits": commits,
             "lanes": lanes,
-            "main_branch": main_branch or "main"
+            "main_branch": main_branch or "main",
+            "repo_name": repo_name,
+            "remote_url": remote_url,
+            "git_root": git_root
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
