@@ -313,8 +313,9 @@ def get_branch_graph(limit: int = 50, path: Optional[str] = None):
                 relative_date = parts[5]
                 date = parts[6]
 
-                # Parse refs to find branch names
+                # Parse refs to find branch names and tags
                 branch_refs = []
+                tag_refs = []
                 is_head = False
                 is_main = False
                 if refs:
@@ -325,7 +326,9 @@ def get_branch_graph(limit: int = 50, path: Optional[str] = None):
                         elif ref.startswith('HEAD -> '):
                             is_head = True
                             branch_refs.append(ref.replace('HEAD -> ', ''))
-                        elif not ref.startswith('origin/') and not ref.startswith('tag:'):
+                        elif ref.startswith('tag: '):
+                            tag_refs.append(ref.replace('tag: ', ''))
+                        elif not ref.startswith('origin/'):
                             branch_refs.append(ref)
 
                         if 'main' in ref or 'master' in ref:
@@ -340,6 +343,7 @@ def get_branch_graph(limit: int = 50, path: Optional[str] = None):
                     "parents": parents,
                     "parent_short": [p[:7] for p in parents],
                     "branches": branch_refs,
+                    "tags": tag_refs,
                     "is_head": is_head,
                     "is_main": is_main,
                     "message": message,
