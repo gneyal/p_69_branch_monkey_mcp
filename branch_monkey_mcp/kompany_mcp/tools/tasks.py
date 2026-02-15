@@ -43,8 +43,11 @@ def auto_log_activity(tool_name: str, duration: float = 0):
 
 
 @mcp.tool()
-def monkey_task_list() -> str:
+def monkey_task_list(machine_id: str = None) -> str:
     """List all tasks for the current project.
+
+    Args:
+        machine_id: Optional machine UUID to filter tasks by a specific machine
 
     Requires a project to be focused first using monkey_project_focus.
     """
@@ -52,8 +55,10 @@ def monkey_task_list() -> str:
         return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first.\n\nUse `monkey_project_list` to see available projects."
 
     try:
-        endpoint = f"/api/tasks?project_id={state.CURRENT_PROJECT_ID}"
-        result = api_get(endpoint)
+        params = {"project_id": state.CURRENT_PROJECT_ID}
+        if machine_id:
+            params["machine_id"] = machine_id
+        result = api_get("/api/tasks", params=params)
         tasks = result.get("tasks", [])
 
         if not tasks:
