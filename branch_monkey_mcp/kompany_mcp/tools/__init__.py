@@ -18,6 +18,7 @@ from . import domains
 from . import contexts
 from . import agents
 from . import deployments
+from . import decisions
 
 __all__ = [
     "status",
@@ -33,4 +34,5 @@ __all__ = [
     "contexts",
     "agents",
     "deployments",
+    "decisions",
 ]
