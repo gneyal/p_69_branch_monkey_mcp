@@ -365,6 +365,23 @@ def monkey_task_complete(
             except Exception as ctx_err:
                 output += f"\n\n⚠️ Could not create context: {str(ctx_err)}"
 
+        # Create notification for task completion
+        try:
+            notif_title = f"Task #{task_id} completed"
+            notif_message = summary[:200]
+            if github_pr_url:
+                notif_message += f"\nPR: {github_pr_url}"
+
+            api_post("/api/notifications", {
+                "project_id": state.CURRENT_PROJECT_ID,
+                "type": "success",
+                "title": notif_title,
+                "message": notif_message,
+                "link": github_pr_url or None
+            })
+        except Exception:
+            pass  # Non-critical
+
         return output
     except Exception as e:
         return f"Error completing task: {str(e)}"
