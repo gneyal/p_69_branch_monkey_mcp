@@ -37,4 +37,5 @@ ENV/
 .DS_Store
 Thumbs.db
 .worktrees/
+.workspaces/
 .branch_monkey/
