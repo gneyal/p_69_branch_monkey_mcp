@@ -150,7 +150,8 @@ def monkey_machine_update(
     goal: str = None,
     status: str = None,
     position_x: float = None,
-    position_y: float = None
+    position_y: float = None,
+    agent_id: str = None
 ) -> str:
     """Update an existing machine.
 
@@ -162,6 +163,7 @@ def monkey_machine_update(
         status: New status - active, paused, or draft (optional)
         position_x: New X position (optional)
         position_y: New Y position (optional)
+        agent_id: UUID of the agent to assign (optional)
     """
     if not state.CURRENT_PROJECT_ID:
         return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
@@ -180,6 +182,8 @@ def monkey_machine_update(
             updates["position_x"] = position_x
         if position_y is not None:
             updates["position_y"] = position_y
+        if agent_id is not None:
+            updates["agent_id"] = agent_id
 
         if not updates:
             return "⚠️ No updates provided. Specify at least one field to update."
