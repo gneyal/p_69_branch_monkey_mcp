@@ -27,9 +27,18 @@ class CreateAgentRequest(BaseModel):
     description: Optional[str] = None
     working_dir: Optional[str] = None
     prompt: Optional[str] = None
-    skip_branch: bool = False
+    workflow: str = "execute"
+    skip_branch: bool = False  # Legacy: prefer workflow field
     branch: Optional[str] = None
     defer_start: bool = False
+
+
+class RunAgentRequest(BaseModel):
+    """Request to run an agent with its system prompt (e.g. from a cron)."""
+    agent_name: str = "Agent"
+    system_prompt: str
+    instructions: str
+    working_dir: Optional[str] = None
 
 
 class TaskExecuteRequest(BaseModel):
@@ -136,6 +145,9 @@ async def execute_task(request: TaskExecuteRequest):
 @router.post("/agents")
 async def create_agent(request: CreateAgentRequest):
     """Create and start a new local Claude Code agent."""
+    # Derive skip_branch from workflow — non-code workflows skip git worktree
+    skip_branch = request.skip_branch or request.workflow in ("ask", "plan", "workspace")
+
     return await agent_manager.create(
         task_id=request.task_id,
         task_number=request.task_number,
@@ -143,10 +155,46 @@ async def create_agent(request: CreateAgentRequest):
         task_description=request.description,
         working_dir=request.working_dir,
         prompt=request.prompt,
-        skip_branch=request.skip_branch,
+        skip_branch=skip_branch,
         branch=request.branch,
         defer_start=request.defer_start
     )
+
+
+@router.post("/run-agent")
+async def run_agent(request: RunAgentRequest):
+    """Run an agent with a system prompt and instructions.
+
+    Used by cron jobs and other automated triggers.
+    The agent's system_prompt is passed via --append-system-prompt,
+    and the instructions are the user message via -p.
+    """
+    working_dir = request.working_dir or get_default_working_dir()
+
+    if working_dir and not os.path.isdir(working_dir):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Working directory does not exist: {working_dir}"
+        )
+
+    print(f"[RunAgent] Starting agent: {request.agent_name}")
+    print(f"[RunAgent] Working directory: {working_dir}")
+
+    result = await agent_manager.create(
+        task_title=request.agent_name,
+        working_dir=working_dir,
+        prompt=request.instructions,
+        system_prompt=request.system_prompt,
+        skip_branch=True
+    )
+
+    return {
+        "success": True,
+        "agent_id": result.get("id"),
+        "agent_name": request.agent_name,
+        "status": result.get("status"),
+        "work_dir": result.get("work_dir")
+    }
 
 
 @router.get("/agents")

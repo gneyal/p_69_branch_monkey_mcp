@@ -104,6 +104,7 @@ class LocalAgentManager:
         task_description: Optional[str] = None,
         working_dir: Optional[str] = None,
         prompt: Optional[str] = None,
+        system_prompt: Optional[str] = None,
         skip_branch: bool = False,
         branch: Optional[str] = None,
         defer_start: bool = False
@@ -206,7 +207,7 @@ class LocalAgentManager:
             }
 
         # Build prompt and spawn CLI process immediately
-        final_prompt = self._build_prompt(prompt, task_id, task_number, task_title, task_description, target_branch, worktree_path)
+        final_prompt = self._build_prompt(prompt, task_id, task_number, task_title, task_description, target_branch, worktree_path, work_dir)
 
         agent = LocalAgent(
             id=agent_id,
@@ -225,7 +226,7 @@ class LocalAgentManager:
         self._agents[agent_id] = agent
 
         try:
-            self._start_cli_process(agent, final_prompt)
+            self._start_cli_process(agent, final_prompt, system_prompt=system_prompt)
 
             return {
                 "id": agent_id,
@@ -253,9 +254,10 @@ class LocalAgentManager:
         task_title: str,
         task_description: Optional[str],
         target_branch: Optional[str],
-        worktree_path: Optional[str]
+        worktree_path: Optional[str],
+        work_dir: Optional[str] = None
     ) -> str:
-        """Build the final prompt, prepending worktree info if applicable."""
+        """Build the final prompt, prepending worktree/workspace info if applicable."""
         if prompt:
             final_prompt = prompt
             if worktree_path:
@@ -285,10 +287,11 @@ Do NOT create another worktree - you are already isolated. Skip any worktree cre
 {json.dumps(task_json, indent=2)}
 ```"""
 
-    def _start_cli_process(self, agent: LocalAgent, final_prompt: str) -> None:
+    def _start_cli_process(self, agent: LocalAgent, final_prompt: str, system_prompt: Optional[str] = None) -> None:
         """Spawn the Claude CLI process and start reading output."""
         env = os.environ.copy()
         env.pop("ANTHROPIC_API_KEY", None)  # Use user's subscription
+        env.pop("CLAUDECODE", None)  # Allow nested launches from within Claude Code
 
         cmd = [
             "claude",
@@ -297,6 +300,9 @@ Do NOT create another worktree - you are already isolated. Skip any worktree cre
             "--verbose",
             "--dangerously-skip-permissions"
         ]
+
+        if system_prompt:
+            cmd.extend(["--append-system-prompt", system_prompt])
 
         process = subprocess.Popen(
             cmd,
@@ -331,11 +337,11 @@ Do NOT create another worktree - you are already isolated. Skip any worktree cre
         if agent.status != "prepared":
             raise HTTPException(status_code=400, detail=f"Agent is not in prepared state (status: {agent.status})")
 
-        # Build the final prompt with worktree context + user message
+        # Build the final prompt with worktree/workspace context + user message
         final_prompt = self._build_prompt(
             message, agent.task_id, agent.task_number,
             agent.task_title, agent.task_description,
-            agent.branch, agent.worktree_path
+            agent.branch, agent.worktree_path, agent.work_dir
         )
 
         print(f"[LocalAgent] Spawning CLI for prepared session {agent_id}")

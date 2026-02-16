@@ -169,9 +169,10 @@ def monkey_task_work(task_id: int, workflow: str = "execute") -> str:
             - "ask": Quick question/research - answer directly, no code changes
             - "plan": Design/architecture - create plan, get approval before implementing
             - "execute": Implementation - create worktree, code, PR, complete with context
+            - "workspace": Non-code task - runs in project dir, saves outputs as contexts
     """
     # Validate workflow
-    valid_workflows = ["ask", "plan", "execute"]
+    valid_workflows = ["ask", "plan", "execute", "workspace"]
     if workflow not in valid_workflows:
         return f"❌ Invalid workflow '{workflow}'. Must be one of: {', '.join(valid_workflows)}"
 
@@ -198,6 +199,14 @@ def monkey_task_work(task_id: int, workflow: str = "execute") -> str:
 3. Use `monkey_task_log` to record the plan
 4. Get user approval before implementing
 5. If approved, switch to execute workflow or create sub-tasks"""
+        elif workflow == "workspace":
+            next_steps = f"""**Next Steps (Workspace Workflow):**
+1. Work on the task (research, analysis, writing, etc.)
+2. Use `monkey_task_log(task_id={task_id}, content="...")` to record progress
+3. Save outputs using `monkey_context_create(name="...", content="...", context_type="general")`
+4. Complete: `monkey_task_complete(task_id={task_id}, summary="...")`
+
+No worktree or PR needed — results are saved as Branch Monkey contexts."""
         else:  # execute
             next_steps = f"""**Next Steps (Execute Workflow):**
 
@@ -277,27 +286,31 @@ def monkey_task_complete(
         github_pr_url = None
         pr_output = ""
 
-        # Try to create PR using gh CLI
-        try:
-            pr_result = subprocess.run(
-                ["gh", "pr", "create", "--fill"],
-                capture_output=True,
-                text=True,
-                timeout=60,
-                cwd=worktree_path if worktree_path else None
-            )
-            pr_output = pr_result.stdout + pr_result.stderr
+        if not worktree_path:
+            # No worktree = non-code task (workspace/ask/plan) — skip PR
+            pr_output = "No worktree — skipping PR creation"
+        else:
+            # Try to create PR using gh CLI
+            try:
+                pr_result = subprocess.run(
+                    ["gh", "pr", "create", "--fill"],
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                    cwd=worktree_path
+                )
+                pr_output = pr_result.stdout + pr_result.stderr
 
-            # Extract PR URL from output (gh pr create outputs the URL)
-            pr_match = re.search(r'https://github\.com/[^/]+/[^/]+/pull/\d+', pr_output)
-            if pr_match:
-                github_pr_url = pr_match.group(0)
-        except FileNotFoundError:
-            pr_output = "gh CLI not found - skipping PR creation"
-        except subprocess.TimeoutExpired:
-            pr_output = "gh pr create timed out"
-        except Exception as e:
-            pr_output = f"PR creation failed: {str(e)}"
+                # Extract PR URL from output (gh pr create outputs the URL)
+                pr_match = re.search(r'https://github\.com/[^/]+/[^/]+/pull/\d+', pr_output)
+                if pr_match:
+                    github_pr_url = pr_match.group(0)
+            except FileNotFoundError:
+                pr_output = "gh CLI not found - skipping PR creation"
+            except subprocess.TimeoutExpired:
+                pr_output = "gh pr create timed out"
+            except Exception as e:
+                pr_output = f"PR creation failed: {str(e)}"
 
         payload = {"summary": summary}
         if github_pr_url:
