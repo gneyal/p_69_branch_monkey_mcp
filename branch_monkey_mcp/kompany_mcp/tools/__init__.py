@@ -19,6 +19,7 @@ from . import contexts
 from . import agents
 from . import deployments
 from . import decisions
+from . import crons
 
 __all__ = [
     "status",
@@ -35,4 +36,5 @@ __all__ = [
     "agents",
     "deployments",
     "decisions",
+    "crons",
 ]
