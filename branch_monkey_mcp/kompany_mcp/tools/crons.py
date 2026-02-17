@@ -32,7 +32,8 @@ def monkey_cron_list() -> str:
             output += f"   Agent: {agent_name} | Type: {c.get('cron_type', 'agent')}\n"
             if c.get("task_prompt"):
                 output += f"   Prompt: {c.get('task_prompt')[:100]}...\n"
-            output += f"   Last run: {c.get('last_run_at', 'never')[:19]} ({c.get('last_run_status', 'unknown')})\n"
+            last_run = c.get('last_run_at') or 'never'
+            output += f"   Last run: {last_run[:19]} ({c.get('last_run_status') or 'unknown'})\n"
             output += f"   ID: `{c.get('id')}`\n\n"
 
         return output
