@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 
 import httpx
+import websockets
 
 from .connection_logger import connection_logger
 
@@ -69,6 +70,9 @@ PERSISTENT_CONFIG_FILE = CONFIG_DIR / "config.json"
 
 # Cloud API URL - fallback if /api/config fetch fails
 FALLBACK_CLOUD_URL = "https://kompany.dev"
+
+# Stream bridge URL - Cloudflare Durable Object for direct streaming
+DEFAULT_STREAM_BRIDGE_URL = "https://stream-bridge.gneyal.workers.dev"
 
 
 def fetch_cloud_url_from_config(fallback_url: str = FALLBACK_CLOUD_URL) -> str:
@@ -156,6 +160,12 @@ class RelayClient:
         self.channel = None
 
         self._running = False
+
+        # Stream bridge (Cloudflare DO) for direct streaming
+        self._do_ws: Optional[websockets.WebSocketClientProtocol] = None
+        self._do_ws_task: Optional[asyncio.Task] = None
+        self._do_ws_reconnect = True
+        self.stream_bridge_url: Optional[str] = None
 
         # Connection state tracking for auto-reconnect
         self.connection_state = ConnectionState.DISCONNECTED
@@ -547,6 +557,10 @@ class RelayClient:
             self._tui_update(connection="connected", connected_at=datetime.now(timezone.utc))
 
             connection_logger.log("connected", detail=f"Channel {channel_name}")
+
+            # Connect to stream bridge (DO) for direct streaming
+            await self._connect_stream_bridge()
+
             return True
 
         except Exception as e:
@@ -557,7 +571,19 @@ class RelayClient:
             return False
 
     async def _disconnect_channel(self):
-        """Disconnect from Supabase Realtime channel."""
+        """Disconnect from Supabase Realtime channel and stream bridge."""
+        # Close DO stream bridge
+        self._do_ws_reconnect = False
+        if self._do_ws_task and not self._do_ws_task.done():
+            self._do_ws_task.cancel()
+            self._do_ws_task = None
+        if self._do_ws:
+            try:
+                await self._do_ws.close()
+            except Exception:
+                pass
+            self._do_ws = None
+
         try:
             if self.channel and self.supabase:
                 await self.supabase.remove_channel(self.channel)
@@ -568,6 +594,83 @@ class RelayClient:
             print("[Relay] Disconnected from channel")
         except Exception as e:
             print(f"[Relay] Error during disconnect: {e}")
+
+    async def _connect_stream_bridge(self):
+        """Connect to Cloudflare DO stream bridge for direct streaming."""
+        # Resolve stream bridge URL from config, env, or default
+        url = (
+            (self.relay_config or {}).get("stream_bridge_url")
+            or os.environ.get("STREAM_BRIDGE_URL")
+            or DEFAULT_STREAM_BRIDGE_URL
+        )
+        # Allow disabling with empty string
+        if not url:
+            print("[Relay] Stream bridge disabled (empty URL)")
+            return
+
+        self.stream_bridge_url = url
+        ws_url = url.replace("https://", "wss://").replace("http://", "ws://").rstrip("/")
+        ws_url = f"{ws_url}/relay/{self.machine_id}?token={self.access_token}"
+
+        try:
+            self._do_ws = await websockets.connect(ws_url, ping_interval=30, ping_timeout=10)
+            self._do_ws_reconnect = True
+            print(f"[Relay] Connected to stream bridge: {self.stream_bridge_url}")
+            connection_logger.log("stream_bridge_connected", detail=self.stream_bridge_url)
+
+            # Start listener for incoming messages (stream_start from browsers)
+            self._do_ws_task = asyncio.create_task(self._do_ws_listen())
+        except Exception as e:
+            print(f"[Relay] Could not connect to stream bridge: {e}")
+            connection_logger.log("stream_bridge_failed", error=str(e))
+            self._do_ws = None
+
+    async def _do_ws_listen(self):
+        """Listen for messages from the DO stream bridge (browser → relay)."""
+        try:
+            async for raw in self._do_ws:
+                try:
+                    data = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+
+                msg_type = data.get("type")
+                if msg_type == "stream_start":
+                    asyncio.create_task(self._handle_stream_start(data, via_do=True))
+                elif msg_type == "stream_stop":
+                    print(f"[Relay] Stream stop via DO: stream_id={data.get('stream_id')}")
+                elif msg_type == "ping":
+                    try:
+                        await self._do_ws.send(json.dumps({"type": "pong"}))
+                    except Exception:
+                        pass
+        except websockets.ConnectionClosed as e:
+            print(f"[Relay] Stream bridge disconnected: code={e.code} reason={e.reason}")
+            connection_logger.log("stream_bridge_disconnected", error=str(e))
+        except asyncio.CancelledError:
+            return
+        except Exception as e:
+            print(f"[Relay] Stream bridge listener error: {e}")
+            connection_logger.log("stream_bridge_error", error=str(e))
+        finally:
+            self._do_ws = None
+            # Auto-reconnect if still running
+            if self._do_ws_reconnect and self._running and self.connection_state == ConnectionState.CONNECTED:
+                asyncio.create_task(self._reconnect_stream_bridge())
+
+    async def _reconnect_stream_bridge(self):
+        """Reconnect to the stream bridge after a delay."""
+        await asyncio.sleep(5)
+        if self._running and self._do_ws_reconnect and self.connection_state == ConnectionState.CONNECTED:
+            print("[Relay] Reconnecting to stream bridge...")
+            await self._connect_stream_bridge()
+
+    async def _send_stream_data(self, use_do: bool, data: dict):
+        """Send stream data via DO WebSocket or Supabase broadcast."""
+        if use_do and self._do_ws:
+            await self._do_ws.send(json.dumps(data))
+        elif self.channel:
+            await self.channel.send_broadcast("stream_event", data)
 
     async def _reconnect(self):
         """Attempt to reconnect with exponential backoff."""
@@ -880,8 +983,14 @@ class RelayClient:
         except Exception as e:
             print(f"[Relay] Error handling message: {e}")
 
-    async def _handle_stream_start(self, payload: Dict[str, Any]):
-        """Handle SSE stream start request - connect to local SSE and forward events."""
+    async def _handle_stream_start(self, payload: Dict[str, Any], via_do: bool = False):
+        """Handle SSE stream start request - connect to local SSE and forward events.
+
+        Args:
+            payload: The stream_start message with stream_id and agent_id.
+            via_do: If True, the request came via the DO WebSocket, so stream
+                    events back through the DO. Otherwise use Supabase broadcast.
+        """
         stream_id = payload.get("stream_id")
         agent_id = payload.get("agent_id")
 
@@ -889,14 +998,17 @@ class RelayClient:
             print(f"[Relay] Stream start missing stream_id or agent_id")
             return
 
+        use_do = via_do and self._do_ws is not None
+        transport = "DO bridge" if use_do else "Supabase"
+
         url = f"http://127.0.0.1:{self.local_port}/api/local-claude/agents/{agent_id}/stream"
-        print(f"[Relay] Starting SSE stream for agent {agent_id}, stream_id={stream_id}")
+        print(f"[Relay] Starting SSE stream for agent {agent_id}, stream_id={stream_id} via {transport}")
 
         try:
             async with httpx.AsyncClient(timeout=None) as client:
                 async with client.stream("GET", url) as response:
                     if response.status_code != 200:
-                        await self.channel.send_broadcast("stream_event", {
+                        await self._send_stream_data(use_do, {
                             "stream_id": stream_id,
                             "type": "error",
                             "error": f"Failed to connect to local SSE: {response.status_code}"
@@ -918,9 +1030,9 @@ class RelayClient:
                                 event_count += 1
                                 event_type = event.get("type", "unknown")
                                 if event_count <= 5 or event_count % 10 == 0:
-                                    print(f"[Relay] Forwarding event #{event_count} type={event_type} for agent {agent_id}")
-                                # Forward the event through Realtime
-                                await self.channel.send_broadcast("stream_event", {
+                                    print(f"[Relay] Forwarding event #{event_count} type={event_type} via {transport}")
+                                # Forward the event
+                                await self._send_stream_data(use_do, {
                                     "stream_id": stream_id,
                                     "event": event
                                 })
@@ -932,7 +1044,7 @@ class RelayClient:
 
                             except json.JSONDecodeError:
                                 # Forward raw data if not JSON
-                                await self.channel.send_broadcast("stream_event", {
+                                await self._send_stream_data(use_do, {
                                     "stream_id": stream_id,
                                     "raw": data
                                 })
@@ -944,11 +1056,14 @@ class RelayClient:
                 error=str(e),
             )
             print(f"[Relay] Stream error for agent {agent_id}: {e}")
-            await self.channel.send_broadcast("stream_event", {
-                "stream_id": stream_id,
-                "type": "error",
-                "error": str(e)
-            })
+            try:
+                await self._send_stream_data(use_do, {
+                    "stream_id": stream_id,
+                    "type": "error",
+                    "error": str(e)
+                })
+            except Exception:
+                pass
 
     async def _execute_local_request(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """Execute request on local server and return response."""
