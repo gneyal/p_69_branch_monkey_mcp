@@ -33,12 +33,24 @@ class CreateAgentRequest(BaseModel):
     defer_start: bool = False
 
 
+class CronCallback(BaseModel):
+    """Callback info for notifying the cloud when a cron agent finishes."""
+    url: str
+    secret: str = ""
+    cron_id: str = ""
+    cron_name: str = ""
+    agent_name: str = ""
+    project_id: str = ""
+    user_id: str = ""
+
+
 class RunAgentRequest(BaseModel):
     """Request to run an agent with its system prompt (e.g. from a cron)."""
     agent_name: str = "Agent"
     system_prompt: str
     instructions: str
     working_dir: Optional[str] = None
+    callback: Optional[CronCallback] = None
 
 
 class TaskExecuteRequest(BaseModel):
@@ -180,12 +192,17 @@ async def run_agent(request: RunAgentRequest):
     print(f"[RunAgent] Starting agent: {request.agent_name}")
     print(f"[RunAgent] Working directory: {working_dir}")
 
+    callback_dict = None
+    if request.callback:
+        callback_dict = request.callback.model_dump()
+
     result = await agent_manager.create(
         task_title=request.agent_name,
         working_dir=working_dir,
         prompt=request.instructions,
         system_prompt=request.system_prompt,
-        skip_branch=True
+        skip_branch=True,
+        callback=callback_dict
     )
 
     return {

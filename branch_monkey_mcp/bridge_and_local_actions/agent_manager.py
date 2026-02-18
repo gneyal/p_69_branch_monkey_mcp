@@ -45,6 +45,7 @@ class LocalAgent:
     last_activity: datetime = field(default_factory=datetime.now)
     exit_code: Optional[int] = None
     session_id: Optional[str] = None
+    callback: Optional[Dict] = None  # Cron completion callback info
 
 
 class LocalAgentManager:
@@ -107,7 +108,8 @@ class LocalAgentManager:
         system_prompt: Optional[str] = None,
         skip_branch: bool = False,
         branch: Optional[str] = None,
-        defer_start: bool = False
+        defer_start: bool = False,
+        callback: Optional[Dict] = None
     ) -> dict:
         """Create and optionally start a new local Claude Code agent.
 
@@ -187,7 +189,8 @@ class LocalAgentManager:
                 worktree_path=worktree_path,
                 branch=target_branch,
                 branch_created=branch_created,
-                status="prepared"
+                status="prepared",
+                callback=callback
             )
             self._agents[agent_id] = agent
             print(f"[LocalAgent] Session prepared (deferred start): {agent_id}")
@@ -220,7 +223,8 @@ class LocalAgentManager:
             worktree_path=worktree_path,
             branch=target_branch,
             branch_created=branch_created,
-            status="starting"
+            status="starting",
+            callback=callback
         )
 
         self._agents[agent_id] = agent
@@ -444,6 +448,70 @@ Do NOT create another worktree - you are already isolated. Skip any worktree cre
                     })
                 except Exception:
                     pass
+
+        # Fire completion callback (for cron-triggered agents)
+        if agent.callback:
+            await self._fire_callback(agent)
+
+    def _extract_result(self, agent: LocalAgent) -> str:
+        """Extract the final result text from the agent's output buffer.
+
+        Looks for the 'result' type message in the stream-json output.
+        Falls back to collecting assistant message text content.
+        """
+        # Look for explicit result message (Claude CLI stream-json format)
+        for item in reversed(agent.output_buffer):
+            parsed = item.get("parsed") if isinstance(item, dict) else None
+            if not parsed:
+                continue
+            if parsed.get("type") == "result":
+                return parsed.get("result", "")
+
+        # Fallback: collect all assistant text content
+        text_parts = []
+        for item in agent.output_buffer:
+            parsed = item.get("parsed") if isinstance(item, dict) else None
+            if not parsed:
+                continue
+            if parsed.get("type") == "assistant":
+                message = parsed.get("message", {})
+                for block in message.get("content", []):
+                    if block.get("type") == "text":
+                        text_parts.append(block.get("text", ""))
+
+        return "\n\n".join(text_parts) if text_parts else ""
+
+    async def _fire_callback(self, agent: LocalAgent) -> None:
+        """Send completion callback to the cloud (for cron-triggered agents)."""
+        import httpx
+
+        callback = agent.callback
+        if not callback or not callback.get("url"):
+            return
+
+        result_text = self._extract_result(agent)
+        status = agent.status  # completed, failed, or paused
+
+        payload = {
+            "cron_id": callback.get("cron_id", ""),
+            "cron_name": callback.get("cron_name", ""),
+            "agent_name": callback.get("agent_name", ""),
+            "project_id": callback.get("project_id", ""),
+            "user_id": callback.get("user_id", ""),
+            "status": "completed" if status in ("completed", "paused") else "failed",
+            "output": result_text
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.post(
+                    callback["url"],
+                    json=payload,
+                    headers={"x-cron-secret": callback.get("secret", "")}
+                )
+            print(f"[LocalAgent] Callback sent for {agent.task_title}: status={resp.status_code}")
+        except Exception as e:
+            print(f"[LocalAgent] Callback failed for {agent.task_title}: {e}")
 
     async def _run_with_resume(self, agent: LocalAgent, message: str, image_paths: List[str] = None) -> None:
         """Run a follow-up message using session resume.
