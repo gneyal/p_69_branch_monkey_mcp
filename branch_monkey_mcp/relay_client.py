@@ -583,6 +583,7 @@ class RelayClient:
             except Exception:
                 pass
             self._do_ws = None
+            self._tui_update(stream_bridge=None)
 
         try:
             if self.channel and self.supabase:
@@ -617,6 +618,7 @@ class RelayClient:
             self._do_ws_reconnect = True
             print(f"[Relay] Connected to stream bridge: {self.stream_bridge_url}")
             connection_logger.log("stream_bridge_connected", detail=self.stream_bridge_url)
+            self._tui_update(stream_bridge=True)
 
             # Start listener for incoming messages (stream_start from browsers)
             self._do_ws_task = asyncio.create_task(self._do_ws_listen())
@@ -624,6 +626,7 @@ class RelayClient:
             print(f"[Relay] Could not connect to stream bridge: {e}")
             connection_logger.log("stream_bridge_failed", error=str(e))
             self._do_ws = None
+            self._tui_update(stream_bridge=str(e)[:60])
 
     async def _do_ws_listen(self):
         """Listen for messages from the DO stream bridge (browser → relay)."""
@@ -654,6 +657,7 @@ class RelayClient:
             connection_logger.log("stream_bridge_error", error=str(e))
         finally:
             self._do_ws = None
+            self._tui_update(stream_bridge=False)
             # Auto-reconnect if still running
             if self._do_ws_reconnect and self._running and self.connection_state == ConnectionState.CONNECTED:
                 asyncio.create_task(self._reconnect_stream_bridge())

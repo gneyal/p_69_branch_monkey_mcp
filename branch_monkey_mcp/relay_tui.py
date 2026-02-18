@@ -91,6 +91,7 @@ class RelayTUI:
             "org_name": None,
             "onboarding_needed": False,
             "registered": None,  # None=pending, True=ok, str=error
+            "stream_bridge": None,  # None=not started, True=connected, False=disconnected, str=error
         }
         self._stdout_capture = LogCapture(sys.stdout)
         self._stderr_capture = LogCapture(sys.stderr)
@@ -452,6 +453,29 @@ class RelayTUI:
         y += 1
         if self._verbose:
             self._put(stdscr, y, val_col, "Handles agent execution requests", self._dim())
+            y += 1
+
+        # Stream bridge (DO)
+        sb = s.get("stream_bridge")
+        self._put(stdscr, y, lbl_col, "Stream Bridge", self._dim())
+        if sb is True:
+            self._put(stdscr, y, val_col, "\u25cf", self._green() | self._bold())
+            self._put(stdscr, y, val_col + 2, "Connected")
+        elif sb is False:
+            self._put(stdscr, y, val_col, "\u25cf", self._red() | self._bold())
+            self._put(stdscr, y, val_col + 2, "Disconnected")
+        elif isinstance(sb, str):
+            self._put(stdscr, y, val_col, "\u25cf", self._red() | self._bold())
+            self._put(stdscr, y, val_col + 2, sb[:bar_w - val_col])
+        elif conn == "connected":
+            self._put(stdscr, y, val_col, "\u25cf", self._yellow() | self._bold())
+            self._put(stdscr, y, val_col + 2, "Connecting...")
+        else:
+            self._put(stdscr, y, val_col, "\u25cf", self._dim())
+            self._put(stdscr, y, val_col + 2, "\u2014")
+        y += 1
+        if self._verbose:
+            self._put(stdscr, y, val_col, "Direct streaming via Cloudflare DO", self._dim())
             y += 1
 
         # Heartbeat
