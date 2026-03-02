@@ -171,10 +171,15 @@ class RelayClient:
         self.connection_state = ConnectionState.DISCONNECTED
         self.reconnect_attempts = 0
         self.last_successful_heartbeat: Optional[datetime] = None
+        self.last_channel_activity: Optional[datetime] = None
+        self._channel_liveness_failures = 0
         self.should_reconnect = True  # False when explicitly disconnected
         self._reconnect_task: Optional[asyncio.Task] = None
         self._health_check_task: Optional[asyncio.Task] = None
         self._heartbeat_task: Optional[asyncio.Task] = None
+        self._background_tasks: set = set()
+        self._do_reconnect_attempts = 0
+        self._auth_refreshing = False
         self.tui = tui
         self._request_count = 0
 
@@ -182,6 +187,13 @@ class RelayClient:
         """Update TUI state if active."""
         if self.tui:
             self.tui.update(**kwargs)
+
+    def _create_tracked_task(self, coro):
+        """Create an asyncio task that's tracked for cleanup."""
+        task = asyncio.create_task(coro)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return task
 
     def _get_reconnect_delay(self) -> float:
         """Calculate reconnect delay with exponential backoff and jitter."""
@@ -485,6 +497,7 @@ class RelayClient:
         # Import supabase here to avoid import errors if not installed
         try:
             from supabase import acreate_client, AsyncClient
+            from supabase.lib.client_options import AsyncClientOptions
         except ImportError:
             print("[Relay] Error: supabase library not installed")
             print("[Relay] Install with: pip install supabase")
@@ -510,8 +523,11 @@ class RelayClient:
         print(f"[Relay] Local port: {self.local_port}")
 
         try:
-            # Create Supabase client
-            self.supabase = await acreate_client(supabase_url, supabase_key)
+            # Create Supabase client with higher realtime retries for long-running relay
+            options = AsyncClientOptions(
+                realtime={"max_retries": 50, "initial_backoff": 1.0}
+            )
+            self.supabase = await acreate_client(supabase_url, supabase_key, options)
 
             # Channel name for this machine
             channel_name = f"{channel_prefix}:{self.user_id}:{self.machine_id}"
@@ -521,11 +537,11 @@ class RelayClient:
 
             # Handle incoming messages
             def on_request(payload):
-                asyncio.create_task(self._handle_message(payload))
+                self._create_tracked_task(self._handle_message(payload))
 
             def on_disconnect(payload):
                 print(f"\n[Relay] Received disconnect command from cloud")
-                asyncio.create_task(self._shutdown())
+                self._create_tracked_task(self._shutdown())
 
             self.channel.on_broadcast("request", on_request)
             self.channel.on_broadcast("stream_request", on_request)
@@ -554,6 +570,8 @@ class RelayClient:
             self.connection_state = ConnectionState.CONNECTED
             self.reconnect_attempts = 0
             self.last_successful_heartbeat = datetime.utcnow()
+            self.last_channel_activity = datetime.utcnow()
+            self._channel_liveness_failures = 0
             self._tui_update(connection="connected", connected_at=datetime.now(timezone.utc))
 
             connection_logger.log("connected", detail=f"Channel {channel_name}")
@@ -585,11 +603,27 @@ class RelayClient:
             self._do_ws = None
             self._tui_update(stream_bridge=None)
 
+        # Cancel tracked background tasks
+        for task in list(self._background_tasks):
+            if not task.done():
+                task.cancel()
+        self._background_tasks.clear()
+
         try:
             if self.channel and self.supabase:
                 await self.supabase.remove_channel(self.channel)
                 self.channel = None
+
+            # Close the Supabase realtime client to stop its internal tasks
+            if self.supabase:
+                try:
+                    await self.supabase.realtime.close()
+                except Exception:
+                    pass
+                self.supabase = None
+
             self.connection_state = ConnectionState.DISCONNECTED
+            self._channel_liveness_failures = 0
             self._tui_update(connection="disconnected")
             connection_logger.log("disconnected", detail="Channel removed")
             print("[Relay] Disconnected from channel")
@@ -616,6 +650,7 @@ class RelayClient:
         try:
             self._do_ws = await websockets.connect(ws_url, ping_interval=30, ping_timeout=10)
             self._do_ws_reconnect = True
+            self._do_reconnect_attempts = 0  # Reset backoff on success
             print(f"[Relay] Connected to stream bridge: {self.stream_bridge_url}")
             connection_logger.log("stream_bridge_connected", detail=self.stream_bridge_url)
             self._tui_update(stream_bridge=True)
@@ -639,7 +674,7 @@ class RelayClient:
 
                 msg_type = data.get("type")
                 if msg_type == "stream_start":
-                    asyncio.create_task(self._handle_stream_start(data, via_do=True))
+                    self._create_tracked_task(self._handle_stream_start(data, via_do=True))
                 elif msg_type == "stream_stop":
                     print(f"[Relay] Stream stop via DO: stream_id={data.get('stream_id')}")
                 elif msg_type == "ping":
@@ -660,21 +695,32 @@ class RelayClient:
             self._tui_update(stream_bridge=False)
             # Auto-reconnect if still running
             if self._do_ws_reconnect and self._running and self.connection_state == ConnectionState.CONNECTED:
-                asyncio.create_task(self._reconnect_stream_bridge())
+                self._create_tracked_task(self._reconnect_stream_bridge())
 
     async def _reconnect_stream_bridge(self):
-        """Reconnect to the stream bridge after a delay."""
-        await asyncio.sleep(5)
+        """Reconnect to the stream bridge with exponential backoff (5-60s)."""
+        delay = min(5 * (2 ** self._do_reconnect_attempts), 60)
+        jitter = delay * 0.2 * random.random()
+        self._do_reconnect_attempts += 1
+        total_delay = delay + jitter
+
+        print(f"[Relay] Reconnecting to stream bridge in {total_delay:.1f}s (attempt {self._do_reconnect_attempts})...")
+        await asyncio.sleep(total_delay)
+
         if self._running and self._do_ws_reconnect and self.connection_state == ConnectionState.CONNECTED:
-            print("[Relay] Reconnecting to stream bridge...")
             await self._connect_stream_bridge()
 
     async def _send_stream_data(self, use_do: bool, data: dict):
         """Send stream data via DO WebSocket or Supabase broadcast."""
-        if use_do and self._do_ws:
-            await self._do_ws.send(json.dumps(data))
-        elif self.channel:
-            await self.channel.send_broadcast("stream_event", data)
+        try:
+            if use_do and self._do_ws:
+                await self._do_ws.send(json.dumps(data))
+            elif self.channel:
+                await self.channel.send_broadcast("stream_event", data)
+                self.last_channel_activity = datetime.utcnow()
+        except Exception as e:
+            connection_logger.log("channel_send_failed", error=str(e), detail="stream_event")
+            raise  # Re-raise so callers can handle stream failures
 
     async def _reconnect(self):
         """Attempt to reconnect with exponential backoff."""
@@ -739,26 +785,83 @@ class RelayClient:
         # Start reconnection
         self._reconnect_task = asyncio.create_task(self._reconnect())
 
+    async def _check_channel_alive(self) -> bool:
+        """Test channel liveness by attempting a broadcast send."""
+        if not self.channel:
+            return False
+        try:
+            await self.channel.send_broadcast("heartbeat", {
+                "machine_id": self.machine_id,
+                "ts": datetime.utcnow().isoformat()
+            })
+            self.last_channel_activity = datetime.utcnow()
+            return True
+        except Exception as e:
+            connection_logger.log("channel_send_failed", error=str(e), detail="liveness probe")
+            return False
+
+    async def _refresh_auth(self):
+        """Re-authenticate in background when token expires (401)."""
+        if self._auth_refreshing:
+            return
+        self._auth_refreshing = True
+        try:
+            print("[Relay] Re-authenticating...")
+            self._clear_token()
+            if await self.authenticate():
+                connection_logger.log("auth_refreshed", detail="Token refreshed successfully")
+                print("[Relay] Re-authentication successful")
+                # Reconnect stream bridge with new token (it uses the relay token)
+                if self._do_ws:
+                    try:
+                        await self._do_ws.close()
+                    except Exception:
+                        pass
+                    self._do_ws = None
+                    self._do_reconnect_attempts = 0
+                    await self._connect_stream_bridge()
+            else:
+                connection_logger.log("auth_expired", detail="Re-authentication failed")
+                print("[Relay] Re-authentication failed")
+        except Exception as e:
+            print(f"[Relay] Re-authentication error: {e}")
+        finally:
+            self._auth_refreshing = False
+
     async def _health_check_loop(self):
-        """Monitor connection health and trigger reconnect if needed."""
+        """Monitor connection health via direct channel liveness probe.
+
+        Instead of relying on cloud heartbeat staleness (which conflates
+        cloud API health with channel health), we test the Supabase channel
+        directly by attempting a broadcast send every 30s.
+        """
         while self._running:
             try:
                 await asyncio.sleep(CONNECTION_HEALTH_CHECK_INTERVAL)
 
                 if self.connection_state != ConnectionState.CONNECTED:
+                    self._channel_liveness_failures = 0
                     continue
 
-                # Check if heartbeat has succeeded recently
-                if self.last_successful_heartbeat:
-                    time_since_heartbeat = datetime.utcnow() - self.last_successful_heartbeat
-                    if time_since_heartbeat.total_seconds() > HEARTBEAT_TIMEOUT:
-                        stale_secs = int(time_since_heartbeat.total_seconds())
+                # Direct channel liveness test
+                alive = await self._check_channel_alive()
+
+                if alive:
+                    self._channel_liveness_failures = 0
+                    connection_logger.log("channel_liveness_ok")
+                else:
+                    self._channel_liveness_failures += 1
+                    print(f"[Relay] Channel liveness probe failed ({self._channel_liveness_failures}x)")
+
+                    # 2 consecutive failures → channel is dead, reconnect
+                    if self._channel_liveness_failures >= 2:
                         connection_logger.log(
                             "health_check_triggered_reconnect",
-                            detail=f"No heartbeat for {stale_secs}s",
-                            reason="heartbeat_timeout",
+                            detail=f"Channel liveness failed {self._channel_liveness_failures}x",
+                            reason="channel_dead",
                         )
-                        print(f"[Relay] No successful heartbeat for {stale_secs}s - reconnecting")
+                        print(f"[Relay] Channel appears dead — reconnecting")
+                        self._channel_liveness_failures = 0
                         await self._trigger_reconnect()
 
             except asyncio.CancelledError:
@@ -835,6 +938,12 @@ class RelayClient:
             if self._reconnect_task:
                 self._reconnect_task.cancel()
 
+            # Cancel all tracked fire-and-forget tasks
+            for task in list(self._background_tasks):
+                if not task.done():
+                    task.cancel()
+            self._background_tasks.clear()
+
             # Wait for tasks to finish
             tasks = [t for t in [self._heartbeat_task, self._health_check_task] if t]
             if tasks:
@@ -876,7 +985,12 @@ class RelayClient:
             self._tui_update(registered=str(e)[:80])
 
     async def _heartbeat_loop(self):
-        """Send periodic heartbeats to keep connection alive and detect disconnects."""
+        """Send periodic heartbeats to cloud API and local server.
+
+        Cloud API failures (500s, timeouts) are logged but do NOT trigger
+        Supabase reconnection — the channel liveness probe in _health_check_loop
+        handles actual channel death separately.
+        """
         consecutive_failures = 0
 
         while self._running:
@@ -886,34 +1000,46 @@ class RelayClient:
                 if self.connection_state != ConnectionState.CONNECTED:
                     continue
 
-                # Heartbeat to cloud API
-                await self._cloud_heartbeat("online")
+                try:
+                    # Heartbeat to cloud API
+                    await self._cloud_heartbeat("online")
+
+                    # Success - reset failure counter
+                    self.last_successful_heartbeat = datetime.utcnow()
+                    consecutive_failures = 0
+                    self._tui_update(last_heartbeat=datetime.now(timezone.utc))
+                    connection_logger.log("heartbeat_ok")
+
+                except Exception as e:
+                    error_str = str(e)
+
+                    # Handle 401 Unauthorized — trigger background re-auth
+                    if "401" in error_str or "Unauthorized" in error_str:
+                        connection_logger.log("auth_expired", detail="Cloud API returned 401, re-authenticating")
+                        print(f"[Relay] Cloud API 401 — triggering re-authentication")
+                        self._create_tracked_task(self._refresh_auth())
+                        continue  # Don't count as heartbeat failure
+
+                    consecutive_failures += 1
+                    connection_logger.log(
+                        "heartbeat_failed",
+                        detail=f"Consecutive failure #{consecutive_failures}",
+                        error=error_str,
+                    )
+
+                    if consecutive_failures <= 3 or consecutive_failures % 10 == 0:
+                        print(f"[Relay] Cloud heartbeat failed ({consecutive_failures}x): {e}")
+                    # Do NOT trigger reconnect — cloud API failures don't mean
+                    # the Supabase channel is dead. The health check loop
+                    # uses a direct channel liveness probe for that.
 
                 # Heartbeat to local server (so dashboard knows relay is connected)
                 await self._send_local_heartbeat()
 
-                # Success - reset failure counter
-                self.last_successful_heartbeat = datetime.utcnow()
-                consecutive_failures = 0
-                self._tui_update(last_heartbeat=datetime.now(timezone.utc))
-                connection_logger.log("heartbeat_ok")
-
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                consecutive_failures += 1
-                connection_logger.log(
-                    "heartbeat_failed",
-                    detail=f"Consecutive failure #{consecutive_failures}",
-                    error=str(e),
-                )
-                print(f"[Relay] Heartbeat error (attempt {consecutive_failures}): {e}")
-
-                # If heartbeats keep failing, connection might be dead
-                if consecutive_failures >= 3:
-                    print(f"[Relay] Multiple heartbeat failures - connection may be dead")
-                    await self._trigger_reconnect()
-                    consecutive_failures = 0
+                print(f"[Relay] Heartbeat loop error: {e}")
 
     async def _send_local_heartbeat(self):
         """Send heartbeat to local server to indicate relay is connected."""
@@ -958,11 +1084,18 @@ class RelayClient:
         sys.exit(0)
 
     def _send_pong(self):
-        """Respond to ping with pong."""
-        self.channel.send_broadcast("pong", {
-            "machine_id": self.machine_id,
-            "timestamp": datetime.utcnow().isoformat()
-        })
+        """Respond to ping with pong (wrapped in task for async send)."""
+        async def _do_pong():
+            try:
+                await self.channel.send_broadcast("pong", {
+                    "machine_id": self.machine_id,
+                    "timestamp": datetime.utcnow().isoformat()
+                })
+                self.last_channel_activity = datetime.utcnow()
+            except Exception as e:
+                connection_logger.log("channel_send_failed", error=str(e), detail="pong")
+
+        self._create_tracked_task(_do_pong())
 
     async def _handle_message(self, payload: Dict[str, Any]):
         """Handle incoming message from cloud."""
@@ -978,11 +1111,16 @@ class RelayClient:
 
             if msg_type == "stream_start":
                 # Start SSE streaming for an agent
-                asyncio.create_task(self._handle_stream_start(actual_payload))
+                self._create_tracked_task(self._handle_stream_start(actual_payload))
             elif msg_type in ("request", "stream_request"):
                 response = await self._execute_local_request(actual_payload)
-                await self.channel.send_broadcast("response", response)
-                print(f"[Relay] Sent response: status={response.get('status')}")
+                try:
+                    await self.channel.send_broadcast("response", response)
+                    self.last_channel_activity = datetime.utcnow()
+                    print(f"[Relay] Sent response: status={response.get('status')}")
+                except Exception as e:
+                    connection_logger.log("channel_send_failed", error=str(e), detail="response")
+                    print(f"[Relay] Failed to send response: {e}")
 
         except Exception as e:
             print(f"[Relay] Error handling message: {e}")

@@ -55,6 +55,18 @@ EVENT_TYPES = {
 
     # Health
     "health_check_triggered_reconnect",
+    "channel_liveness_ok",
+    "channel_send_failed",
+
+    # Auth
+    "auth_expired",
+    "auth_refreshed",
+
+    # Stream bridge
+    "stream_bridge_connected",
+    "stream_bridge_disconnected",
+    "stream_bridge_failed",
+    "stream_bridge_error",
 }
 
 LOG_DIR = Path.home() / ".kompany"
