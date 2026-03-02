@@ -1433,21 +1433,27 @@ def _run_with_tui(args, home_dir, current_project, onboarding_needed=False):
 
     tui._on_home_set = on_home_set
 
-    # Callback when user chooses to install launchd service
-    def on_launchd_install(do_install):
+    # Callback when user toggles launchd service (install/uninstall)
+    def on_launchd_toggle(do_install):
+        import subprocess
         if do_install:
             home = tui.state.get("home_dir")
             if install_launchd_service(home):
                 tui.update(launchd="running")
-                print("[Relay] Launchd service installed and started.")
+                print("[Relay] Launchd service installed.")
             else:
                 tui.update(launchd="error")
                 print("[Relay] Failed to install launchd service.")
         else:
-            save_persistent_config({"launchd_declined": True})
+            # Uninstall
+            if LAUNCHD_PLIST_PATH.exists():
+                subprocess.run(["launchctl", "unload", str(LAUNCHD_PLIST_PATH)], capture_output=True)
+                LAUNCHD_PLIST_PATH.unlink(missing_ok=True)
+            tui.update(launchd="not_installed")
+            print("[Relay] Launchd service removed.")
         tui.update(launchd_prompt="done")
 
-    tui._on_launchd_install = on_launchd_install
+    tui._on_launchd_install = on_launchd_toggle
 
     # Callback when user logs out
     def on_logout():
@@ -1457,8 +1463,7 @@ def _run_with_tui(args, home_dir, current_project, onboarding_needed=False):
 
     tui._on_logout = on_logout
 
-    # Detect current launchd status and prompt if not installed
-    launchd_prompt = None
+    # Detect current launchd status
     if sys.platform == "darwin":
         ld_status = check_launchd_status()
         if ld_status["running"]:
@@ -1467,9 +1472,6 @@ def _run_with_tui(args, home_dir, current_project, onboarding_needed=False):
             launchd_state = "installed"
         else:
             launchd_state = "not_installed"
-            persistent_cfg = load_persistent_config()
-            if not persistent_cfg.get("launchd_declined"):
-                launchd_prompt = "pending"
     else:
         launchd_state = None
 
@@ -1498,7 +1500,6 @@ def _run_with_tui(args, home_dir, current_project, onboarding_needed=False):
         org_name=cached_org_name,
         onboarding_needed=onboarding_needed,
         launchd=launchd_state,
-        launchd_prompt=launchd_prompt,
     )
     tui.install_capture()
 

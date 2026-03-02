@@ -275,6 +275,13 @@ class RelayTUI:
         elif key == ord("v") or key == ord("V"):
             if self._view == "dashboard":
                 self._verbose = not self._verbose
+        elif key == ord("s") or key == ord("S"):
+            if self._view == "dashboard" and self._on_launchd_install:
+                ld = self.state.get("launchd")
+                if ld in ("running", "installed"):
+                    self._on_launchd_install(False)  # uninstall
+                else:
+                    self._on_launchd_install(True)  # install
         elif key == ord("d") or key == ord("D"):
             if self._view == "dashboard" and self._on_logout:
                 self._on_logout()
@@ -580,6 +587,11 @@ class RelayTUI:
         self._put(stdscr, footer_y, x, "[H]", self._cyan() | self._bold())
         self._put(stdscr, footer_y, x + 4, "Home", self._dim())
         x += 10
+        self._put(stdscr, footer_y, x, "[S]", self._cyan() | self._bold())
+        ld = self.state.get("launchd")
+        s_label = "Uninstall" if ld in ("running", "installed") else "Startup"
+        self._put(stdscr, footer_y, x + 4, s_label, self._dim())
+        x += 4 + len(s_label) + 2
         self._put(stdscr, footer_y, x, "[V]", self._cyan() | self._bold())
         self._put(stdscr, footer_y, x + 4, "Verbose", self._dim())
         x += 13
