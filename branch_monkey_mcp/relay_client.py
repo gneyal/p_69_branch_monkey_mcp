@@ -1430,11 +1430,6 @@ def _run_with_tui(args, home_dir, current_project, onboarding_needed=False):
             set_home_directory(path)
         except Exception:
             pass
-        # After onboarding, check if launchd should be offered
-        if sys.platform == "darwin":
-            status = check_launchd_status()
-            if not status["installed"]:
-                tui.update(launchd_prompt="pending")
 
     tui._on_home_set = on_home_set
 
@@ -1448,6 +1443,8 @@ def _run_with_tui(args, home_dir, current_project, onboarding_needed=False):
             else:
                 tui.update(launchd="error")
                 print("[Relay] Failed to install launchd service.")
+        else:
+            save_persistent_config({"launchd_declined": True})
         tui.update(launchd_prompt="done")
 
     tui._on_launchd_install = on_launchd_install
@@ -1460,7 +1457,8 @@ def _run_with_tui(args, home_dir, current_project, onboarding_needed=False):
 
     tui._on_logout = on_logout
 
-    # Detect current launchd status
+    # Detect current launchd status and prompt if not installed
+    launchd_prompt = None
     if sys.platform == "darwin":
         ld_status = check_launchd_status()
         if ld_status["running"]:
@@ -1469,6 +1467,9 @@ def _run_with_tui(args, home_dir, current_project, onboarding_needed=False):
             launchd_state = "installed"
         else:
             launchd_state = "not_installed"
+            persistent_cfg = load_persistent_config()
+            if not persistent_cfg.get("launchd_declined"):
+                launchd_prompt = "pending"
     else:
         launchd_state = None
 
@@ -1497,6 +1498,7 @@ def _run_with_tui(args, home_dir, current_project, onboarding_needed=False):
         org_name=cached_org_name,
         onboarding_needed=onboarding_needed,
         launchd=launchd_state,
+        launchd_prompt=launchd_prompt,
     )
     tui.install_capture()
 
