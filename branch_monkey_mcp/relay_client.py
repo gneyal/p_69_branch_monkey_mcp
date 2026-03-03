@@ -1030,8 +1030,8 @@ class RelayClient:
                     if consecutive_failures <= 3 or consecutive_failures % 10 == 0:
                         print(f"[Relay] Cloud heartbeat failed ({consecutive_failures}x): {e}")
 
-                    # Self-heal: after 20 consecutive failures, trigger full reconnect
-                    if consecutive_failures >= 20:
+                    # Self-heal: after 7 consecutive failures (~3 min), trigger full reconnect
+                    if consecutive_failures >= 7:
                         print(f"[Relay] {consecutive_failures} consecutive heartbeat failures — triggering reconnect")
                         connection_logger.log("heartbeat_triggered_reconnect", detail=f"{consecutive_failures} consecutive failures")
                         consecutive_failures = 0
