@@ -409,7 +409,8 @@ Do NOT create another worktree - you are already isolated. Skip any worktree cre
                 except json.JSONDecodeError:
                     # Filter out known noise from subprocess stderr
                     noise_prefixes = ("warn:", "Warning:", "DeprecationWarning", "[DEP")
-                    if text.startswith(noise_prefixes):
+                    noise_substrings = ("oven-sh/bun", "baseline.zip", "baseline build")
+                    if text.startswith(noise_prefixes) or any(s in text for s in noise_substrings):
                         continue
                     for queue in agent.output_listeners:
                         try:
