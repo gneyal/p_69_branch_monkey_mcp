@@ -407,6 +407,10 @@ Do NOT create another worktree - you are already isolated. Skip any worktree cre
                             pass
 
                 except json.JSONDecodeError:
+                    # Filter out known noise from subprocess stderr
+                    noise_prefixes = ("warn:", "Warning:", "DeprecationWarning", "[DEP")
+                    if text.startswith(noise_prefixes):
+                        continue
                     for queue in agent.output_listeners:
                         try:
                             await queue.put({
