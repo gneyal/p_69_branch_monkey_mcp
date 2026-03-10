@@ -150,9 +150,9 @@ def get_relay_status() -> dict:
 # Default app config values
 _DEFAULT_APP_CONFIG = {
     "appName": "branch/main",
-    "appNameDisplay": "Branch Monkey",
-    "appNameTitle": "Branch Monkey",
-    "appMcpNameTitle": "Branch Monkey",
+    "appNameDisplay": "Kompany",
+    "appNameTitle": "Kompany",
+    "appMcpNameTitle": "Kompany",
     "appDomain": None
 }
 

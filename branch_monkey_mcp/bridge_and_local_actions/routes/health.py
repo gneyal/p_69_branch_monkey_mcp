@@ -16,7 +16,7 @@ router = APIRouter()
 @router.get("/health")
 def health_check():
     """Health check endpoint."""
-    return {"status": "ok", "service": "branch-monkey-relay"}
+    return {"status": "ok", "service": "kompany-relay"}
 
 
 def _get_dashboard_response():
@@ -42,7 +42,7 @@ def api_status():
     """Status endpoint for frontend compatibility."""
     return {
         "status": "ok",
-        "service": "branch-monkey-relay",
+        "service": "kompany-relay",
         "agents": len(agent_manager._agents),
         "mode": "local",
         "working_directory": get_default_working_dir()

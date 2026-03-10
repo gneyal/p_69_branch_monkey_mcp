@@ -1,5 +1,5 @@
 """
-Local Server Package for Branch Monkey Relay.
+Local Server Package for Kompany Relay.
 
 This package provides a FastAPI server that handles local Claude Code agent operations.
 When combined with the relay client, it allows cloud users to run agents on local machines.

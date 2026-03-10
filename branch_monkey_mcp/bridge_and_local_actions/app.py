@@ -11,7 +11,7 @@ from .routes import main_router
 
 # Create the FastAPI app
 app = FastAPI(
-    title="Branch Monkey Local Agent Server",
+    title="Kompany Local Agent Server",
     description="Local server for running Claude Code agents",
     version="0.2.0"
 )

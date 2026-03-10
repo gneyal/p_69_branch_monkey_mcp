@@ -1,5 +1,5 @@
 """
-Connection Event Logger for Branch Monkey Relay.
+Connection Event Logger for Kompany Relay.
 
 Provides two ways to find disconnections:
 

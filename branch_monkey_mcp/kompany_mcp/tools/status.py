@@ -19,14 +19,14 @@ CONNECTION_LOG_FILE = Path.home() / ".kompany" / "connection_events.log"
 
 @mcp.tool()
 def monkey_status() -> str:
-    """Get the current status of Branch Monkey."""
+    """Get the current status of Kompany."""
     try:
         token_path = get_token_path()
         auth_status = "Device Token" if token_path.exists() else "API Key"
 
         if not state.CURRENT_PROJECT_ID:
             # No project focused - show guidance
-            return f"""# Branch Monkey Status
+            return f"""# Kompany Status
 
 **Connected to:** {state.API_URL}
 **Auth:** {auth_status}
@@ -34,7 +34,7 @@ def monkey_status() -> str:
 
 ## Getting Started
 
-To use Branch Monkey, you must first select a project to work on:
+To use Kompany, you must first select a project to work on:
 
 1. Run `monkey_project_list` to see available projects
 2. Run `monkey_project_focus <project_id>` to set the active project
@@ -55,7 +55,7 @@ All tasks, machines, versions, team members, and domains are scoped to the focus
         machines = api_get(machine_endpoint)
         machine_count = len(machines.get("machines", []))
 
-        return f"""# Branch Monkey Status
+        return f"""# Kompany Status
 
 **Connected to:** {state.API_URL}
 **Auth:** {auth_status}
@@ -112,7 +112,7 @@ def monkey_login() -> str:
             save_token(state.API_KEY, state.API_URL, state.ORG_ID)
             return """# Login Successful
 
-You are now authenticated with Branch Monkey Cloud.
+You are now authenticated with Kompany Cloud.
 Your token has been saved for future sessions.
 
 Use `monkey_status` to verify your connection."""
@@ -153,7 +153,7 @@ def monkey_diagnose(hours: float = 24.0) -> str:
     if live_diag:
         sections.append(_format_live_diagnostics(live_diag))
     else:
-        sections.append("## Live Relay\n\nLocal relay server not reachable at localhost:18081. Is `branch-monkey-relay` running?")
+        sections.append("## Live Relay\n\nLocal relay server not reachable at localhost:18081. Is the relay running?")
 
     # --- Section 2: Historical log analysis ---
     events = _read_log_events(hours)

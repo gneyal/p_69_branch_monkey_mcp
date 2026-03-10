@@ -1,5 +1,5 @@
 """
-Authentication for Branch Monkey MCP Server.
+Authentication for Kompany MCP Server.
 
 Handles token storage and device code flow authentication.
 """
@@ -76,7 +76,7 @@ def device_code_flow(api_url: str) -> Optional[dict]:
     Returns dict with 'access_token' and 'org_id' on success, None on failure.
     """
     print("\n" + "=" * 60, file=sys.stderr)
-    print("  Branch Monkey - Authentication Required", file=sys.stderr)
+    print("  Kompany - Authentication Required", file=sys.stderr)
     print("=" * 60, file=sys.stderr)
 
     machine_name = get_machine_name()
@@ -134,7 +134,7 @@ def device_code_flow(api_url: str) -> Optional[dict]:
             poll_data = poll_response.json()
 
             if poll_data.get("status") == "approved":
-                print("  Approved! You can now use Branch Monkey.", file=sys.stderr)
+                print("  Approved! You can now use Kompany.", file=sys.stderr)
                 return {
                     "access_token": poll_data.get("access_token"),
                     "org_id": poll_data.get("org_id")

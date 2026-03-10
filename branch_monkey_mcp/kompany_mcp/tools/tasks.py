@@ -206,7 +206,7 @@ def monkey_task_work(task_id: int, workflow: str = "execute") -> str:
 3. Save outputs using `monkey_context_create(name="...", content="...", context_type="general")`
 4. Complete: `monkey_task_complete(task_id={task_id}, summary="...")`
 
-No worktree or PR needed — results are saved as Branch Monkey contexts."""
+No worktree or PR needed — results are saved as Kompany contexts."""
         else:  # execute
             next_steps = f"""**Next Steps (Execute Workflow):**
 

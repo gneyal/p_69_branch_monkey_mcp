@@ -1,5 +1,5 @@
 """
-Dev Proxy for Branch Monkey
+Dev Proxy for Kompany
 
 Runs a reverse proxy on the auth-allowed port (5176) that forwards
 to any local dev server. This allows testing worktree branches
@@ -23,7 +23,7 @@ import uvicorn
 
 def create_proxy_app(target_port: int) -> FastAPI:
     """Create a FastAPI app that proxies all requests to target_port."""
-    app = FastAPI(title="Branch Monkey Dev Proxy")
+    app = FastAPI(title="Kompany Dev Proxy")
 
     @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"])
     async def proxy(request: Request, path: str):
@@ -85,7 +85,7 @@ def create_proxy_app(target_port: int) -> FastAPI:
 
 def run_proxy(target_port: int, proxy_port: int = 5176):
     """Run the dev proxy server."""
-    print(f"\n🐵 Branch Monkey Dev Proxy")
+    print(f"\n🐵 Kompany Dev Proxy")
     print(f"   Listening on: http://localhost:{proxy_port}")
     print(f"   Forwarding to: http://localhost:{target_port}")
     print(f"\n   Access your app at http://localhost:{proxy_port}")

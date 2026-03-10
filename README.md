@@ -1,6 +1,6 @@
-# Branch Monkey MCP Server
+# Kompany MCP Server
 
-MCP (Model Context Protocol) server for [Branch Monkey](https://kompany.dev) - connecting Claude Code to your task management and team collaboration platform.
+MCP (Model Context Protocol) server for [Kompany](https://kompany.dev) - connecting Claude Code to your task management and team collaboration platform.
 
 ## Quick Start
 
@@ -69,7 +69,7 @@ Restart Claude Code. On first use, a browser will open for you to log in and app
 
 ## Local Server Identification
 
-When you run the relay client (`branch-monkey-relay`), your machine connects to Branch Monkey Cloud and becomes available for executing tasks.
+When you run the relay client (`branch-monkey-relay`), your machine connects to Kompany Cloud and becomes available for executing tasks.
 
 ### How Machine Identification Works
 
@@ -144,7 +144,7 @@ If you're having trouble connecting:
 
 On first use:
 1. A browser window opens automatically
-2. Log in to Branch Monkey (or create an account)
+2. Log in to Kompany (or create an account)
 3. Select the organization you want to connect to
 4. Approve the device when prompted
 5. Return to Claude Code - you're connected!

@@ -1,5 +1,5 @@
 """
-MCP Application instance for Branch Monkey.
+MCP Application instance for Kompany.
 
 This module creates the FastMCP application instance that all tools register with.
 """
@@ -13,4 +13,4 @@ except ImportError:
     sys.exit(1)
 
 # Create the MCP app instance
-mcp = FastMCP("Branch Monkey")
+mcp = FastMCP("Kompany")

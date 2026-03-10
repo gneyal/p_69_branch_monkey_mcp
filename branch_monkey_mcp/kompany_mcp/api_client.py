@@ -1,5 +1,5 @@
 """
-HTTP client for Branch Monkey API.
+HTTP client for Kompany API.
 
 Provides authenticated requests with automatic token refresh.
 """
@@ -66,7 +66,7 @@ def api_request(method: str, endpoint: str, **kwargs) -> dict:
 
     # Auto re-authenticate on 401
     if response.status_code == 401:
-        print("\n[Branch Monkey] Token expired, re-authenticating...", file=sys.stderr)
+        print("\n[Kompany] Token expired, re-authenticating...", file=sys.stderr)
         clear_token()
         reset_session()
 

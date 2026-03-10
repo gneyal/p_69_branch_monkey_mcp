@@ -5,12 +5,12 @@ build-backend = "hatchling.build"
 [project]
 name = "branch-monkey-mcp"
 version = "0.3.0"
-description = "Branch Monkey MCP Server for Claude Code - Task management and team collaboration"
+description = "Kompany MCP Server for Claude Code - Task management and team collaboration"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [
-    { name = "Branch Monkey Contributors" }
+    { name = "Kompany Contributors" }
 ]
 keywords = ["mcp", "claude", "claude-code", "task-management", "ai"]
 classifiers = [

@@ -1,7 +1,7 @@
 """
-Branch Monkey MCP Server Package.
+Kompany MCP Server Package.
 
-MCP server for Claude Code that connects to Branch Monkey Cloud.
+MCP server for Claude Code that connects to Kompany Cloud.
 No API key needed - authenticates via browser approval.
 
 Usage:
@@ -44,7 +44,7 @@ if not os.environ.get("BRANCH_MONKEY_API_KEY"):
             print("\n" + "=" * 60, file=sys.stderr)
             print("  AUTHENTICATION FAILED", file=sys.stderr)
             print("=" * 60, file=sys.stderr)
-            print("\nCould not authenticate with Branch Monkey Cloud.", file=sys.stderr)
+            print("\nCould not authenticate with Kompany Cloud.", file=sys.stderr)
             print("\nPossible reasons:", file=sys.stderr)
             print("  - Browser approval was denied or timed out", file=sys.stderr)
             print("  - Network connectivity issues", file=sys.stderr)
@@ -66,7 +66,7 @@ from . import tools
 
 def main():
     """Run the MCP server."""
-    print(f"Branch Monkey MCP starting...", file=sys.stderr)
+    print(f"Kompany MCP starting...", file=sys.stderr)
     print(f"Connecting to: {state.API_URL}", file=sys.stderr)
     mcp.run()
 

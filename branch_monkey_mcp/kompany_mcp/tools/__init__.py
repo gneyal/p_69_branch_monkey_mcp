@@ -1,5 +1,5 @@
 """
-MCP Tools for Branch Monkey.
+MCP Tools for Kompany.
 
 This package contains all MCP tool definitions organized by domain.
 """
