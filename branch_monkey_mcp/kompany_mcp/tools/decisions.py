@@ -12,16 +12,16 @@ from ..mcp_app import mcp
 
 
 @mcp.tool()
-def monkey_decision_list(status: str = None) -> str:
+def kompany_decision_list(status: str = None) -> str:
     """List all decisions for the current project.
 
     Args:
         status: Optional status filter (pending, approved, rejected, dismissed)
 
-    Requires a project to be focused first using monkey_project_focus.
+    Requires a project to be focused first using kompany_project_focus.
     """
     if not state.CURRENT_PROJECT_ID:
-        return "No project focused. Use `monkey_project_focus <project_id>` first.\n\nUse `monkey_project_list` to see available projects."
+        return "No project focused. Use `kompany_project_focus <project_id>` first.\n\nUse `kompany_project_list` to see available projects."
 
     try:
         params = {"project_id": state.CURRENT_PROJECT_ID}
@@ -68,7 +68,7 @@ def monkey_decision_list(status: str = None) -> str:
 
 
 @mcp.tool()
-def monkey_decision_create(
+def kompany_decision_create(
     title: str,
     description: str = "",
     options: str = None,
@@ -93,10 +93,10 @@ def monkey_decision_create(
         task_id: The task this decision relates to
         create_notification: Whether to also create a notification (default: True)
 
-    Requires a project to be focused first using monkey_project_focus.
+    Requires a project to be focused first using kompany_project_focus.
     """
     if not state.CURRENT_PROJECT_ID:
-        return "No project focused. Use `monkey_project_focus <project_id>` first."
+        return "No project focused. Use `kompany_project_focus <project_id>` first."
 
     try:
         options_list = []
@@ -141,7 +141,7 @@ def monkey_decision_create(
 
 
 @mcp.tool()
-def monkey_decision_check(decision_id: str) -> str:
+def kompany_decision_check(decision_id: str) -> str:
     """Check the resolution status of a decision.
 
     Use this to see if the user has approved/rejected a decision you created.

@@ -11,7 +11,7 @@ Add this to your project's `.mcp.json`:
   "mcpServers": {
     "kompany-cloud": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/gneyal/p_69_branch_monkey_mcp.git", "branch-monkey-mcp"],
+      "args": ["--from", "git+https://github.com/gneyal/p_69_branch_kompany_mcp.git", "branch-monkey-mcp"],
       "env": {
         "BRANCH_MONKEY_API_URL": "https://kompany.dev"
       }
@@ -33,39 +33,39 @@ Restart Claude Code. On first use, a browser will open for you to log in and app
 ## Available Tools
 
 ### Status & Auth
-- `monkey_status` - Get connection status
-- `monkey_login` - Force re-authentication (use if having auth issues)
-- `monkey_logout` - Clear auth token
+- `kompany_status` - Get connection status
+- `kompany_login` - Force re-authentication (use if having auth issues)
+- `kompany_logout` - Clear auth token
 
 ### Projects & Organizations
-- `monkey_project_list` - List all projects in your organization
-- `monkey_project_focus` - Set focus to a specific project
-- `monkey_project_clear` - Clear project focus
-- `monkey_org_list` - List organizations you have access to
+- `kompany_project_list` - List all projects in your organization
+- `kompany_project_focus` - Set focus to a specific project
+- `kompany_project_clear` - Clear project focus
+- `kompany_org_list` - List organizations you have access to
 
 ### Tasks
-- `monkey_task_list` - List all tasks
-- `monkey_task_create` - Create a new task
-- `monkey_task_update` - Update a task
-- `monkey_task_delete` - Delete a task
-- `monkey_task_work` - Start working on a task
-- `monkey_task_log` - Log progress on a task
-- `monkey_task_complete` - Mark task as complete
-- `monkey_task_search` - Search tasks
-- `monkey_get_recent_tasks` - Get recently worked tasks
-- `monkey_auto_resume` - Auto-detect related tasks
+- `kompany_task_list` - List all tasks
+- `kompany_task_create` - Create a new task
+- `kompany_task_update` - Update a task
+- `kompany_task_delete` - Delete a task
+- `kompany_task_work` - Start working on a task
+- `kompany_task_log` - Log progress on a task
+- `kompany_task_complete` - Mark task as complete
+- `kompany_task_search` - Search tasks
+- `kompany_get_recent_tasks` - Get recently worked tasks
+- `kompany_auto_resume` - Auto-detect related tasks
 
 ### Versions
-- `monkey_version_list` - List versions
-- `monkey_version_create` - Create a version
+- `kompany_version_list` - List versions
+- `kompany_version_create` - Create a version
 
 ### Team
-- `monkey_team_list` - List team members
-- `monkey_team_add` - Add team member
+- `kompany_team_list` - List team members
+- `kompany_team_add` - Add team member
 
 ### Machines
-- `monkey_machine_list` - List machines
-- `monkey_machine_create` - Create a machine
+- `kompany_machine_list` - List machines
+- `kompany_machine_create` - Create a machine
 
 ## Local Server Identification
 
@@ -135,9 +135,9 @@ The frontend needs to handle the case where a user has multiple computers connec
 
 If you're having trouble connecting:
 
-1. **Use `monkey_login`** - Forces re-authentication via browser
+1. **Use `kompany_login`** - Forces re-authentication via browser
 2. **Check the token file** - Stored at `~/.branch-monkey/token.json`
-3. **Clear and retry** - Use `monkey_logout`, then restart Claude Code
+3. **Clear and retry** - Use `kompany_logout`, then restart Claude Code
 4. **Check network** - Ensure you can access https://kompany.dev
 
 ### First-Time Setup
@@ -149,7 +149,7 @@ On first use:
 4. Approve the device when prompted
 5. Return to Claude Code - you're connected!
 
-After connecting, use `monkey_project_list` to see available projects and `monkey_project_focus <id>` to select one.
+After connecting, use `kompany_project_list` to see available projects and `kompany_project_focus <id>` to select one.
 
 ## Requirements
 

@@ -8,13 +8,13 @@ from ..mcp_app import mcp
 
 
 @mcp.tool()
-def monkey_machine_list() -> str:
+def kompany_machine_list() -> str:
     """List all machines for the current project.
 
-    Requires a project to be focused first using monkey_project_focus.
+    Requires a project to be focused first using kompany_project_focus.
     """
     if not state.CURRENT_PROJECT_ID:
-        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first.\n\nUse `monkey_project_list` to see available projects."
+        return "⚠️ No project focused. Use `kompany_project_focus <project_id>` first.\n\nUse `kompany_project_list` to see available projects."
 
     try:
         endpoint = f"/api/machines?project_id={state.CURRENT_PROJECT_ID}"
@@ -37,7 +37,7 @@ def monkey_machine_list() -> str:
 
 
 @mcp.tool()
-def monkey_machine_create(
+def kompany_machine_create(
     name: str,
     description: str = "",
     goal: str = "",
@@ -61,10 +61,10 @@ def monkey_machine_create(
         leading_metric_name: Input/leading metric name (e.g. "calls made", "emails sent")
         machine_type: generator, processor, funnel, monitor, router, aggregator, syncer, or nurture (default: processor)
 
-    Requires a project to be focused first using monkey_project_focus.
+    Requires a project to be focused first using kompany_project_focus.
     """
     if not state.CURRENT_PROJECT_ID:
-        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
+        return "⚠️ No project focused. Use `kompany_project_focus <project_id>` first."
 
     try:
         payload = {
@@ -115,14 +115,14 @@ def monkey_machine_create(
 
 
 @mcp.tool()
-def monkey_machine_get(machine_id: str) -> str:
+def kompany_machine_get(machine_id: str) -> str:
     """Get a specific machine by ID.
 
     Args:
         machine_id: The UUID of the machine to retrieve
     """
     if not state.CURRENT_PROJECT_ID:
-        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
+        return "⚠️ No project focused. Use `kompany_project_focus <project_id>` first."
 
     try:
         result = api_get(f"/api/machines/{machine_id}")
@@ -143,7 +143,7 @@ def monkey_machine_get(machine_id: str) -> str:
 
 
 @mcp.tool()
-def monkey_machine_update(
+def kompany_machine_update(
     machine_id: str,
     name: str = None,
     description: str = None,
@@ -166,7 +166,7 @@ def monkey_machine_update(
         agent_id: UUID of the agent to assign (optional)
     """
     if not state.CURRENT_PROJECT_ID:
-        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
+        return "⚠️ No project focused. Use `kompany_project_focus <project_id>` first."
 
     try:
         updates = {}
@@ -196,14 +196,14 @@ def monkey_machine_update(
 
 
 @mcp.tool()
-def monkey_machine_delete(machine_id: str) -> str:
+def kompany_machine_delete(machine_id: str) -> str:
     """Delete a machine by ID.
 
     Args:
         machine_id: The UUID of the machine to delete
     """
     if not state.CURRENT_PROJECT_ID:
-        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
+        return "⚠️ No project focused. Use `kompany_project_focus <project_id>` first."
 
     try:
         api_delete(f"/api/machines/{machine_id}")

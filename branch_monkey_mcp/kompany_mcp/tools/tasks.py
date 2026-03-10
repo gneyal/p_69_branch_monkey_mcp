@@ -43,16 +43,16 @@ def auto_log_activity(tool_name: str, duration: float = 0):
 
 
 @mcp.tool()
-def monkey_task_list(machine_id: str = None) -> str:
+def kompany_task_list(machine_id: str = None) -> str:
     """List all tasks for the current project.
 
     Args:
         machine_id: Optional machine UUID to filter tasks by a specific machine
 
-    Requires a project to be focused first using monkey_project_focus.
+    Requires a project to be focused first using kompany_project_focus.
     """
     if not state.CURRENT_PROJECT_ID:
-        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first.\n\nUse `monkey_project_list` to see available projects."
+        return "⚠️ No project focused. Use `kompany_project_focus <project_id>` first.\n\nUse `kompany_project_list` to see available projects."
 
     try:
         params = {"project_id": state.CURRENT_PROJECT_ID}
@@ -78,7 +78,7 @@ def monkey_task_list(machine_id: str = None) -> str:
 
 
 @mcp.tool()
-def monkey_task_create(
+def kompany_task_create(
     title: str,
     description: str = "",
     status: str = "todo",
@@ -88,10 +88,10 @@ def monkey_task_create(
 ) -> str:
     """Create a new task in the current project.
 
-    Requires a project to be focused first using monkey_project_focus.
+    Requires a project to be focused first using kompany_project_focus.
     """
     if not state.CURRENT_PROJECT_ID:
-        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
+        return "⚠️ No project focused. Use `kompany_project_focus <project_id>` first."
 
     try:
         data = {
@@ -114,7 +114,7 @@ def monkey_task_create(
 
 
 @mcp.tool()
-def monkey_task_update(
+def kompany_task_update(
     task_id: str,
     title: str = None,
     description: str = None,
@@ -150,7 +150,7 @@ def monkey_task_update(
 
 
 @mcp.tool()
-def monkey_task_delete(task_id: str) -> str:
+def kompany_task_delete(task_id: str) -> str:
     """Delete a task by UUID."""
     try:
         api_delete(f"/api/tasks/{task_id}")
@@ -160,7 +160,7 @@ def monkey_task_delete(task_id: str) -> str:
 
 
 @mcp.tool()
-def monkey_task_work(task_id: int, workflow: str = "execute") -> str:
+def kompany_task_work(task_id: int, workflow: str = "execute") -> str:
     """Start working on a task. Sets status to in_progress and logs start.
 
     Args:
@@ -190,21 +190,21 @@ def monkey_task_work(task_id: int, workflow: str = "execute") -> str:
         if workflow == "ask":
             next_steps = """**Next Steps (Ask Workflow):**
 1. Research/explore to answer the question
-2. Use `monkey_task_log` to record findings
-3. Use `monkey_task_update` to mark done when answered"""
+2. Use `kompany_task_log` to record findings
+3. Use `kompany_task_update` to mark done when answered"""
         elif workflow == "plan":
             next_steps = """**Next Steps (Plan Workflow):**
 1. Research the codebase and requirements
 2. Create a plan/design document
-3. Use `monkey_task_log` to record the plan
+3. Use `kompany_task_log` to record the plan
 4. Get user approval before implementing
 5. If approved, switch to execute workflow or create sub-tasks"""
         elif workflow == "workspace":
             next_steps = f"""**Next Steps (Workspace Workflow):**
 1. Work on the task (research, analysis, writing, etc.)
-2. Use `monkey_task_log(task_id={task_id}, content="...")` to record progress
-3. Save outputs using `monkey_context_create(name="...", content="...", context_type="general")`
-4. Complete: `monkey_task_complete(task_id={task_id}, summary="...")`
+2. Use `kompany_task_log(task_id={task_id}, content="...")` to record progress
+3. Save outputs using `kompany_context_create(name="...", content="...", context_type="general")`
+4. Complete: `kompany_task_complete(task_id={task_id}, summary="...")`
 
 No worktree or PR needed — results are saved as Kompany contexts."""
         else:  # execute
@@ -218,7 +218,7 @@ cd .worktrees/task-{task_id}
 
 **Step 2: Implement Changes**
 - Make changes in the worktree (NOT the main repo)
-- Use `monkey_task_log()` to record progress
+- Use `kompany_task_log()` to record progress
 
 **Step 3: Commit & Push**
 ```bash
@@ -230,7 +230,7 @@ git push -u origin task/{task_id}-short-description
 ```
 
 **Step 4: Complete Task**
-`monkey_task_complete(task_id={task_id}, summary="...", worktree_path=".worktrees/task-{task_id}")`
+`kompany_task_complete(task_id={task_id}, summary="...", worktree_path=".worktrees/task-{task_id}")`
 
 This creates a GitHub PR. The user reviews and merges it (NOT auto-merged)."""
 
@@ -247,7 +247,7 @@ This creates a GitHub PR. The user reviews and merges it (NOT auto-merged)."""
 
 
 @mcp.tool()
-def monkey_task_log(task_id: int, content: str, update_type: str = "progress") -> str:
+def kompany_task_log(task_id: int, content: str, update_type: str = "progress") -> str:
     """Log LLM work on a task."""
     try:
         api_post(f"/api/tasks/{task_id}/log", {
@@ -261,7 +261,7 @@ def monkey_task_log(task_id: int, content: str, update_type: str = "progress") -
 
 
 @mcp.tool()
-def monkey_task_complete(
+def kompany_task_complete(
     task_id: int,
     summary: str,
     worktree_path: str = None,
@@ -396,7 +396,7 @@ def monkey_task_complete(
 
 
 @mcp.tool()
-def monkey_task_search(query: str, status: str = None, version: str = None) -> str:
+def kompany_task_search(query: str, status: str = None, version: str = None) -> str:
     """Search tasks by title or description."""
     try:
         params = {"query": query}

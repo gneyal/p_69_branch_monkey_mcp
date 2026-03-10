@@ -8,13 +8,13 @@ from ..mcp_app import mcp
 
 
 @mcp.tool()
-def monkey_context_list() -> str:
+def kompany_context_list() -> str:
     """List all contexts for the current project.
 
-    Requires a project to be focused first using monkey_project_focus.
+    Requires a project to be focused first using kompany_project_focus.
     """
     if not state.CURRENT_PROJECT_ID:
-        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first.\n\nUse `monkey_project_list` to see available projects."
+        return "⚠️ No project focused. Use `kompany_project_focus <project_id>` first.\n\nUse `kompany_project_list` to see available projects."
 
     try:
         endpoint = f"/api/contexts?project_id={state.CURRENT_PROJECT_ID}"
@@ -37,7 +37,7 @@ def monkey_context_list() -> str:
 
 
 @mcp.tool()
-def monkey_context_create(
+def kompany_context_create(
     name: str,
     content: str,
     context_type: str = "general"
@@ -47,10 +47,10 @@ def monkey_context_create(
     Contexts are reusable snippets of information that can be attached to tasks.
     Use context_type to categorize: general, code, docs, spec, requirement, etc.
 
-    Requires a project to be focused first using monkey_project_focus.
+    Requires a project to be focused first using kompany_project_focus.
     """
     if not state.CURRENT_PROJECT_ID:
-        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
+        return "⚠️ No project focused. Use `kompany_project_focus <project_id>` first."
 
     try:
         result = api_post("/api/contexts", {
@@ -66,7 +66,7 @@ def monkey_context_create(
 
 
 @mcp.tool()
-def monkey_context_get(context_id: str) -> str:
+def kompany_context_get(context_id: str) -> str:
     """Get a specific context by ID."""
     try:
         result = api_get(f"/api/contexts/{context_id}")
@@ -88,7 +88,7 @@ def monkey_context_get(context_id: str) -> str:
 
 
 @mcp.tool()
-def monkey_context_update(
+def kompany_context_update(
     context_id: str,
     name: str = None,
     content: str = None,
@@ -114,7 +114,7 @@ def monkey_context_update(
 
 
 @mcp.tool()
-def monkey_context_delete(context_id: str) -> str:
+def kompany_context_delete(context_id: str) -> str:
     """Delete a context by ID."""
     try:
         api_delete(f"/api/contexts/{context_id}")
@@ -124,10 +124,10 @@ def monkey_context_delete(context_id: str) -> str:
 
 
 @mcp.tool()
-def monkey_context_search(query: str) -> str:
+def kompany_context_search(query: str) -> str:
     """Search contexts by name or content."""
     if not state.CURRENT_PROJECT_ID:
-        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
+        return "⚠️ No project focused. Use `kompany_project_focus <project_id>` first."
 
     try:
         result = api_get(f"/api/contexts/search/{query}?project_id={state.CURRENT_PROJECT_ID}")
@@ -147,10 +147,10 @@ def monkey_context_search(query: str) -> str:
 
 
 @mcp.tool()
-def monkey_context_recent(limit: int = 10) -> str:
+def kompany_context_recent(limit: int = 10) -> str:
     """Get recently used contexts for the current project."""
     if not state.CURRENT_PROJECT_ID:
-        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
+        return "⚠️ No project focused. Use `kompany_project_focus <project_id>` first."
 
     try:
         result = api_get(f"/api/contexts/recent?limit={limit}&project_id={state.CURRENT_PROJECT_ID}")
@@ -174,7 +174,7 @@ def monkey_context_recent(limit: int = 10) -> str:
 # Task-Context linking tools
 
 @mcp.tool()
-def monkey_task_contexts(task_id: str) -> str:
+def kompany_task_contexts(task_id: str) -> str:
     """Get all contexts linked to a specific task."""
     try:
         result = api_get(f"/api/contexts/task/{task_id}")
@@ -196,7 +196,7 @@ def monkey_task_contexts(task_id: str) -> str:
 
 
 @mcp.tool()
-def monkey_task_link_context(task_id: str, context_id: str) -> str:
+def kompany_task_link_context(task_id: str, context_id: str) -> str:
     """Link an existing context to a task."""
     try:
         api_post(f"/api/contexts/task/{task_id}", {"context_id": context_id})
@@ -206,7 +206,7 @@ def monkey_task_link_context(task_id: str, context_id: str) -> str:
 
 
 @mcp.tool()
-def monkey_task_unlink_context(task_id: str, context_id: str) -> str:
+def kompany_task_unlink_context(task_id: str, context_id: str) -> str:
     """Unlink a context from a task."""
     try:
         api_delete(f"/api/contexts/task/{task_id}/{context_id}")
@@ -216,13 +216,13 @@ def monkey_task_unlink_context(task_id: str, context_id: str) -> str:
 
 
 @mcp.tool()
-def monkey_task_similar_contexts(task_id: str) -> str:
+def kompany_task_similar_contexts(task_id: str) -> str:
     """Find contexts from similar tasks that might be relevant.
 
     Use this when starting a new task to find reusable contexts from related work.
     """
     if not state.CURRENT_PROJECT_ID:
-        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
+        return "⚠️ No project focused. Use `kompany_project_focus <project_id>` first."
 
     try:
         result = api_get(f"/api/contexts/similar/{task_id}?project_id={state.CURRENT_PROJECT_ID}")
@@ -241,7 +241,7 @@ def monkey_task_similar_contexts(task_id: str) -> str:
             output += f"   From: {from_task}\n"
             output += f"   ID: `{c.get('id')}`\n\n"
 
-        output += "\nUse `monkey_task_link_context(task_id, context_id)` to reuse any of these."
+        output += "\nUse `kompany_task_link_context(task_id, context_id)` to reuse any of these."
 
         return output
     except Exception as e:

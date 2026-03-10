@@ -8,7 +8,7 @@ from ..mcp_app import mcp
 
 
 @mcp.tool()
-def monkey_project_list() -> str:
+def kompany_project_list() -> str:
     """List all projects available to you."""
     try:
         result = api_get("/api/projects")
@@ -27,7 +27,7 @@ def monkey_project_list() -> str:
         if state.CURRENT_PROJECT_ID:
             output += f"\n---\n**Current focus:** {state.CURRENT_PROJECT_NAME}\n"
         else:
-            output += f"\n---\n⚠️ No project focused. Use `monkey_project_focus <id>` to set one.\n"
+            output += f"\n---\n⚠️ No project focused. Use `kompany_project_focus <id>` to set one.\n"
 
         return output
     except Exception as e:
@@ -35,7 +35,7 @@ def monkey_project_list() -> str:
 
 
 @mcp.tool()
-def monkey_project_focus(project_id: str) -> str:
+def kompany_project_focus(project_id: str) -> str:
     """Set the project in focus. All operations will be scoped to this project.
 
     Args:
@@ -62,21 +62,21 @@ All operations are now scoped to this project:
 - Task lists will show only this project's tasks
 - Same for machines, versions, team members, and domains
 
-Use `monkey_project_clear` to remove focus."""
+Use `kompany_project_clear` to remove focus."""
     except Exception as e:
         return f"Error focusing project: {str(e)}"
 
 
 @mcp.tool()
-def monkey_project_clear() -> str:
+def kompany_project_clear() -> str:
     """Clear the current project focus."""
     state.CURRENT_PROJECT_ID = None
     state.CURRENT_PROJECT_NAME = None
-    return "✅ Project focus cleared. Use `monkey_project_focus <id>` to set a new project."
+    return "✅ Project focus cleared. Use `kompany_project_focus <id>` to set a new project."
 
 
 @mcp.tool()
-def monkey_org_list() -> str:
+def kompany_org_list() -> str:
     """List all organizations."""
     try:
         result = api_get("/api/organizations")
@@ -97,7 +97,7 @@ def monkey_org_list() -> str:
 
 
 @mcp.tool()
-def monkey_project_create_folder(
+def kompany_project_create_folder(
     base_path: str,
     project_name: str,
     machine_id: str,
@@ -115,7 +115,7 @@ def monkey_project_create_folder(
         Information about the created folder including path.
 
     Example:
-        monkey_project_create_folder("~/Code", "my-saas-app", "machine-abc123")
+        kompany_project_create_folder("~/Code", "my-saas-app", "machine-abc123")
         → Creates ~/Code/my-saas-app/ with git initialized
     """
     try:
@@ -148,7 +148,7 @@ The folder is ready for your project files."""
 
 
 @mcp.tool()
-def monkey_project_scan(path: str, machine_id: str) -> str:
+def kompany_project_scan(path: str, machine_id: str) -> str:
     """Scan a folder for project configuration on a local machine.
 
     Detects git remote, framework, deployment platform, and dev server settings
@@ -204,7 +204,7 @@ def monkey_project_scan(path: str, machine_id: str) -> str:
 
 
 @mcp.tool()
-def monkey_project_list_folders(path: str, machine_id: str) -> str:
+def kompany_project_list_folders(path: str, machine_id: str) -> str:
     """List folders in a directory on a local machine.
 
     Useful for browsing the file system to find project folders.

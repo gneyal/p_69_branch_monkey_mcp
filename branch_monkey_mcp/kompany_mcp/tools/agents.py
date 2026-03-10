@@ -10,14 +10,14 @@ from ..mcp_app import mcp
 
 
 @mcp.tool()
-def monkey_agent_list() -> str:
+def kompany_agent_list() -> str:
     """List all agent definitions for the current project.
 
     Agents are custom AI personas with system prompts that can be assigned to tasks.
-    Requires a project to be focused first using monkey_project_focus.
+    Requires a project to be focused first using kompany_project_focus.
     """
     if not state.CURRENT_PROJECT_ID:
-        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first.\n\nUse `monkey_project_list` to see available projects."
+        return "⚠️ No project focused. Use `kompany_project_focus <project_id>` first.\n\nUse `kompany_project_list` to see available projects."
 
     try:
         endpoint = f"/api/agent-definitions?project_id={state.CURRENT_PROJECT_ID}"
@@ -44,7 +44,7 @@ def monkey_agent_list() -> str:
 
 
 @mcp.tool()
-def monkey_agent_create(
+def kompany_agent_create(
     name: str,
     system_prompt: str,
     description: str = "",
@@ -62,10 +62,10 @@ def monkey_agent_create(
         icon: Icon name (default: bot)
         allowed_tools: Comma-separated list of tool keys, or None for all tools
 
-    Requires a project to be focused first using monkey_project_focus.
+    Requires a project to be focused first using kompany_project_focus.
     """
     if not state.CURRENT_PROJECT_ID:
-        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
+        return "⚠️ No project focused. Use `kompany_project_focus <project_id>` first."
 
     try:
         payload = {
@@ -88,7 +88,7 @@ def monkey_agent_create(
 
 
 @mcp.tool()
-def monkey_agent_get(agent_id: str) -> str:
+def kompany_agent_get(agent_id: str) -> str:
     """Get a specific agent definition by ID.
 
     Args:
@@ -132,7 +132,7 @@ def monkey_agent_get(agent_id: str) -> str:
 
 
 @mcp.tool()
-def monkey_agent_update(
+def kompany_agent_update(
     agent_id: str,
     name: str = None,
     description: str = None,
@@ -182,7 +182,7 @@ def monkey_agent_update(
 
 
 @mcp.tool()
-def monkey_agent_delete(agent_id: str) -> str:
+def kompany_agent_delete(agent_id: str) -> str:
     """Delete an agent definition by ID.
 
     Args:
@@ -198,7 +198,7 @@ def monkey_agent_delete(agent_id: str) -> str:
 
 
 @mcp.tool()
-def monkey_apply_agent(
+def kompany_apply_agent(
     agent_slug: str,
     instructions: str,
     context: str = None
@@ -217,14 +217,14 @@ def monkey_apply_agent(
         The agent's response/output
 
     Example:
-        monkey_apply_agent(
+        kompany_apply_agent(
             agent_slug="planner",
             instructions="Plan tasks for implementing user authentication with OAuth",
             context='{"existing_tasks": [], "available_agents": ["code", "test", "docs"]}'
         )
     """
     if not state.CURRENT_PROJECT_ID:
-        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
+        return "⚠️ No project focused. Use `kompany_project_focus <project_id>` first."
 
     try:
         # Fetch agent by slug from database

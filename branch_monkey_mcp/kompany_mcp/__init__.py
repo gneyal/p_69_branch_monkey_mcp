@@ -51,7 +51,7 @@ if not os.environ.get("BRANCH_MONKEY_API_KEY"):
             print(f"  - Unable to reach {state.API_URL}", file=sys.stderr)
             print("\nTo try again:", file=sys.stderr)
             print("  1. Restart Claude Code", file=sys.stderr)
-            print("  2. Or use the `monkey_login` tool after startup", file=sys.stderr)
+            print("  2. Or use the `kompany_login` tool after startup", file=sys.stderr)
             print("=" * 60 + "\n", file=sys.stderr)
             sys.exit(1)
 else:

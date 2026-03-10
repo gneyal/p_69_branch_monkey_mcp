@@ -8,13 +8,13 @@ from ..mcp_app import mcp
 
 
 @mcp.tool()
-def monkey_team_list() -> str:
+def kompany_team_list() -> str:
     """List all team members for the current project.
 
-    Requires a project to be focused first using monkey_project_focus.
+    Requires a project to be focused first using kompany_project_focus.
     """
     if not state.CURRENT_PROJECT_ID:
-        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first.\n\nUse `monkey_project_list` to see available projects."
+        return "⚠️ No project focused. Use `kompany_project_focus <project_id>` first.\n\nUse `kompany_project_list` to see available projects."
 
     try:
         endpoint = f"/api/team-members?project_id={state.CURRENT_PROJECT_ID}"
@@ -34,13 +34,13 @@ def monkey_team_list() -> str:
 
 
 @mcp.tool()
-def monkey_team_add(name: str, email: str = "", role: str = "", color: str = "#6366f1") -> str:
+def kompany_team_add(name: str, email: str = "", role: str = "", color: str = "#6366f1") -> str:
     """Add a new team member to the current project.
 
-    Requires a project to be focused first using monkey_project_focus.
+    Requires a project to be focused first using kompany_project_focus.
     """
     if not state.CURRENT_PROJECT_ID:
-        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
+        return "⚠️ No project focused. Use `kompany_project_focus <project_id>` first."
 
     try:
         api_post("/api/team-members", {

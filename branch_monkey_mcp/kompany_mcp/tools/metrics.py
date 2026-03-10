@@ -8,14 +8,14 @@ from ..mcp_app import mcp
 
 
 @mcp.tool()
-def monkey_metric_list(machine_id: str) -> str:
+def kompany_metric_list(machine_id: str) -> str:
     """List all metrics for a machine.
 
     Args:
         machine_id: The UUID of the machine
     """
     if not state.CURRENT_PROJECT_ID:
-        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
+        return "⚠️ No project focused. Use `kompany_project_focus <project_id>` first."
 
     try:
         result = api_get(f"/api/machines/{machine_id}/metrics")
@@ -36,7 +36,7 @@ def monkey_metric_list(machine_id: str) -> str:
 
 
 @mcp.tool()
-def monkey_metric_add(
+def kompany_metric_add(
     machine_id: str,
     metric_name: str,
     value: float = 0,
@@ -55,7 +55,7 @@ def monkey_metric_add(
         label: Optional label for the metric
     """
     if not state.CURRENT_PROJECT_ID:
-        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
+        return "⚠️ No project focused. Use `kompany_project_focus <project_id>` first."
 
     try:
         payload = {
@@ -76,7 +76,7 @@ def monkey_metric_add(
 
 
 @mcp.tool()
-def monkey_metric_update(
+def kompany_metric_update(
     machine_id: str,
     metric_name: str,
     value: float = None,
@@ -95,7 +95,7 @@ def monkey_metric_update(
         label: New label (optional)
     """
     if not state.CURRENT_PROJECT_ID:
-        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
+        return "⚠️ No project focused. Use `kompany_project_focus <project_id>` first."
 
     try:
         payload = {"metric_name": metric_name}
@@ -116,7 +116,7 @@ def monkey_metric_update(
 
 
 @mcp.tool()
-def monkey_metric_delete(
+def kompany_metric_delete(
     machine_id: str,
     metric_name: str
 ) -> str:
@@ -127,7 +127,7 @@ def monkey_metric_delete(
         metric_name: Name of the metric to delete
     """
     if not state.CURRENT_PROJECT_ID:
-        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
+        return "⚠️ No project focused. Use `kompany_project_focus <project_id>` first."
 
     try:
         result = api_delete(f"/api/machines/{machine_id}/metrics?metric_name={metric_name}")

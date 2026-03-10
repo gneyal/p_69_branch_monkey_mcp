@@ -18,7 +18,7 @@ CONNECTION_LOG_FILE = Path.home() / ".kompany" / "connection_events.log"
 
 
 @mcp.tool()
-def monkey_status() -> str:
+def kompany_status() -> str:
     """Get the current status of Kompany."""
     try:
         token_path = get_token_path()
@@ -36,8 +36,8 @@ def monkey_status() -> str:
 
 To use Kompany, you must first select a project to work on:
 
-1. Run `monkey_project_list` to see available projects
-2. Run `monkey_project_focus <project_id>` to set the active project
+1. Run `kompany_project_list` to see available projects
+2. Run `kompany_project_focus <project_id>` to set the active project
 
 All tasks, machines, versions, team members, and domains are scoped to the focused project.
 """
@@ -67,19 +67,19 @@ All tasks, machines, versions, team members, and domains are scoped to the focus
 - **Versions:** {version_count}
 
 ## Available Commands
-- `monkey_task_list` - List tasks for this project
-- `monkey_task_create` - Create a new task
-- `monkey_machine_list` - List machines
-- `monkey_version_list` - List versions
-- `monkey_team_list` - List team members
-- `monkey_project_clear` - Clear project focus
+- `kompany_task_list` - List tasks for this project
+- `kompany_task_create` - Create a new task
+- `kompany_machine_list` - List machines
+- `kompany_version_list` - List versions
+- `kompany_team_list` - List team members
+- `kompany_project_clear` - Clear project focus
 """
     except Exception as e:
         return f"Error connecting to API: {str(e)}"
 
 
 @mcp.tool()
-def monkey_logout() -> str:
+def kompany_logout() -> str:
     """Log out and clear stored authentication token."""
     try:
         clear_token()
@@ -88,13 +88,13 @@ def monkey_logout() -> str:
 Your authentication token has been cleared.
 On next use, you'll be prompted to approve the device again via your browser.
 
-To re-authenticate now, use `monkey_login`."""
+To re-authenticate now, use `kompany_login`."""
     except Exception as e:
         return f"Error logging out: {str(e)}"
 
 
 @mcp.tool()
-def monkey_login() -> str:
+def kompany_login() -> str:
     """Force re-authentication via browser approval. Use this if you're having auth issues."""
     try:
         # Clear existing token
@@ -115,7 +115,7 @@ def monkey_login() -> str:
 You are now authenticated with Kompany Cloud.
 Your token has been saved for future sessions.
 
-Use `monkey_status` to verify your connection."""
+Use `kompany_status` to verify your connection."""
         else:
             return """# Login Failed
 
@@ -124,7 +124,7 @@ Authentication was not completed. This could be because:
 - The code expired (15 minute timeout)
 - Network connectivity issues
 
-Please try again with `monkey_login`."""
+Please try again with `kompany_login`."""
     except Exception as e:
         return f"""# Login Error
 
@@ -133,11 +133,11 @@ Failed to authenticate: {str(e)}
 If this persists, check:
 1. Network connectivity to {state.API_URL}
 2. That you can access {state.API_URL}/approve in your browser
-3. Try logging out with `monkey_logout` and restart Claude Code"""
+3. Try logging out with `kompany_logout` and restart Claude Code"""
 
 
 @mcp.tool()
-def monkey_diagnose(hours: float = 24.0) -> str:
+def kompany_diagnose(hours: float = 24.0) -> str:
     """
     Diagnose relay connection issues. Shows live diagnostics and analyzes
     the connection event log for patterns like frequent disconnects,
@@ -410,7 +410,7 @@ def _compute_stability(counts: dict, events: list, hours: float) -> str:
     if hb_total > 0 and hb_fail / hb_total > 0.1:
         tips.append("Heartbeat failures — local server may be overloaded or unresponsive")
     if counts.get("auth_error", 0) > 0:
-        tips.append("Auth errors seen — try `monkey_login` to re-authenticate")
+        tips.append("Auth errors seen — try `kompany_login` to re-authenticate")
     if counts.get("channel_error", 0) > 0:
         tips.append("Channel errors — Supabase Realtime may be having issues")
     if disconnects > 0 and reconnects == 0:

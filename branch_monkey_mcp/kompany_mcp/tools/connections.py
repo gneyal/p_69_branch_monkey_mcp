@@ -8,7 +8,7 @@ from ..mcp_app import mcp
 
 
 @mcp.tool()
-def monkey_connection_create(
+def kompany_connection_create(
     source_machine_id: str,
     target_machine_id: str,
     label: str = ""
@@ -20,10 +20,10 @@ def monkey_connection_create(
         target_machine_id: UUID of the target machine
         label: Optional label for the connection edge
 
-    Requires a project to be focused first using monkey_project_focus.
+    Requires a project to be focused first using kompany_project_focus.
     """
     if not state.CURRENT_PROJECT_ID:
-        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
+        return "⚠️ No project focused. Use `kompany_project_focus <project_id>` first."
 
     try:
         result = api_post("/api/machine-connections", {
@@ -41,13 +41,13 @@ def monkey_connection_create(
 
 
 @mcp.tool()
-def monkey_connection_list() -> str:
+def kompany_connection_list() -> str:
     """List all machine connections for the current project.
 
-    Requires a project to be focused first using monkey_project_focus.
+    Requires a project to be focused first using kompany_project_focus.
     """
     if not state.CURRENT_PROJECT_ID:
-        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
+        return "⚠️ No project focused. Use `kompany_project_focus <project_id>` first."
 
     try:
         result = api_get("/api/machine-connections")
@@ -67,14 +67,14 @@ def monkey_connection_list() -> str:
 
 
 @mcp.tool()
-def monkey_connection_delete(connection_id: str) -> str:
+def kompany_connection_delete(connection_id: str) -> str:
     """Delete a machine connection by ID.
 
     Args:
         connection_id: The ID of the connection to delete
     """
     if not state.CURRENT_PROJECT_ID:
-        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
+        return "⚠️ No project focused. Use `kompany_project_focus <project_id>` first."
 
     try:
         api_delete(f"/api/machine-connections/{connection_id}")

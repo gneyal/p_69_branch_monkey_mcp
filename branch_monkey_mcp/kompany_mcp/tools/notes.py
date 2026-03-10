@@ -8,13 +8,13 @@ from ..mcp_app import mcp
 
 
 @mcp.tool()
-def monkey_note_list() -> str:
+def kompany_note_list() -> str:
     """List all company notes for the current project.
 
-    Requires a project to be focused first using monkey_project_focus.
+    Requires a project to be focused first using kompany_project_focus.
     """
     if not state.CURRENT_PROJECT_ID:
-        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
+        return "⚠️ No project focused. Use `kompany_project_focus <project_id>` first."
 
     try:
         endpoint = f"/api/company-notes?project_id={state.CURRENT_PROJECT_ID}"
@@ -37,7 +37,7 @@ def monkey_note_list() -> str:
 
 
 @mcp.tool()
-def monkey_note_create(
+def kompany_note_create(
     content: str = "",
     color: str = "#fef08a",
     position_x: float = 100,
@@ -55,10 +55,10 @@ def monkey_note_create(
         width: Note width in pixels
         height: Note height in pixels
 
-    Requires a project to be focused first using monkey_project_focus.
+    Requires a project to be focused first using kompany_project_focus.
     """
     if not state.CURRENT_PROJECT_ID:
-        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
+        return "⚠️ No project focused. Use `kompany_project_focus <project_id>` first."
 
     try:
         result = api_post("/api/company-notes", {
@@ -77,14 +77,14 @@ def monkey_note_create(
 
 
 @mcp.tool()
-def monkey_note_get(note_id: str) -> str:
+def kompany_note_get(note_id: str) -> str:
     """Get a specific note by ID.
 
     Args:
         note_id: The UUID of the note to retrieve
     """
     if not state.CURRENT_PROJECT_ID:
-        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
+        return "⚠️ No project focused. Use `kompany_project_focus <project_id>` first."
 
     try:
         result = api_get(f"/api/company-notes/{note_id}")
@@ -103,7 +103,7 @@ def monkey_note_get(note_id: str) -> str:
 
 
 @mcp.tool()
-def monkey_note_update(
+def kompany_note_update(
     note_id: str,
     content: str = None,
     color: str = None,
@@ -124,7 +124,7 @@ def monkey_note_update(
         height: New height (optional)
     """
     if not state.CURRENT_PROJECT_ID:
-        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
+        return "⚠️ No project focused. Use `kompany_project_focus <project_id>` first."
 
     try:
         updates = {}
@@ -151,14 +151,14 @@ def monkey_note_update(
 
 
 @mcp.tool()
-def monkey_note_delete(note_id: str) -> str:
+def kompany_note_delete(note_id: str) -> str:
     """Delete a note by ID.
 
     Args:
         note_id: The UUID of the note to delete
     """
     if not state.CURRENT_PROJECT_ID:
-        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
+        return "⚠️ No project focused. Use `kompany_project_focus <project_id>` first."
 
     try:
         api_delete(f"/api/company-notes/{note_id}")

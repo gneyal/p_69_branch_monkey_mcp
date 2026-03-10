@@ -11,13 +11,13 @@ from ..mcp_app import mcp
 
 
 @mcp.tool()
-def monkey_deploy_list() -> str:
+def kompany_deploy_list() -> str:
     """List all deployment configurations for the current project.
 
-    Requires a project to be focused first using monkey_project_focus.
+    Requires a project to be focused first using kompany_project_focus.
     """
     if not state.CURRENT_PROJECT_ID:
-        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
+        return "⚠️ No project focused. Use `kompany_project_focus <project_id>` first."
 
     try:
         endpoint = f"/api/deployments?project_id={state.CURRENT_PROJECT_ID}"
@@ -25,7 +25,7 @@ def monkey_deploy_list() -> str:
         deployments = result.get("deployments", [])
 
         if not deployments:
-            return f"No deployments configured for project **{state.CURRENT_PROJECT_NAME}**.\n\nUse `monkey_deploy_create` to add one."
+            return f"No deployments configured for project **{state.CURRENT_PROJECT_NAME}**.\n\nUse `kompany_deploy_create` to add one."
 
         output = f"# Deployments (Project: {state.CURRENT_PROJECT_NAME})\n\n"
         for d in deployments:
@@ -44,7 +44,7 @@ def monkey_deploy_list() -> str:
 
 
 @mcp.tool()
-def monkey_deploy_create(
+def kompany_deploy_create(
     name: str,
     platform: str,
     environment: str = "production",
@@ -64,10 +64,10 @@ def monkey_deploy_create(
         auto_deploy: Whether pushes auto-deploy (default: True)
         config: JSON string with platform-specific config (optional)
 
-    Requires a project to be focused first using monkey_project_focus.
+    Requires a project to be focused first using kompany_project_focus.
     """
     if not state.CURRENT_PROJECT_ID:
-        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
+        return "⚠️ No project focused. Use `kompany_project_focus <project_id>` first."
 
     try:
         data = {
@@ -91,7 +91,7 @@ def monkey_deploy_create(
 
 
 @mcp.tool()
-def monkey_deploy_get(deployment_id: str) -> str:
+def kompany_deploy_get(deployment_id: str) -> str:
     """Get details of a specific deployment configuration.
 
     Args:
@@ -123,7 +123,7 @@ def monkey_deploy_get(deployment_id: str) -> str:
 
 
 @mcp.tool()
-def monkey_deploy_update(
+def kompany_deploy_update(
     deployment_id: str,
     name: str = None,
     platform: str = None,
@@ -181,7 +181,7 @@ def monkey_deploy_update(
 
 
 @mcp.tool()
-def monkey_deploy_delete(deployment_id: str) -> str:
+def kompany_deploy_delete(deployment_id: str) -> str:
     """Delete a deployment configuration.
 
     Args:
@@ -195,7 +195,7 @@ def monkey_deploy_delete(deployment_id: str) -> str:
 
 
 @mcp.tool()
-def monkey_deploy_detect() -> str:
+def kompany_deploy_detect() -> str:
     """Auto-detect deployment configuration from the current project's codebase.
 
     Looks for common config files:
@@ -206,10 +206,10 @@ def monkey_deploy_detect() -> str:
     - fly.toml (Fly.io)
     - render.yaml (Render)
 
-    Returns detected configuration that can be used with monkey_deploy_create.
+    Returns detected configuration that can be used with kompany_deploy_create.
     """
     if not state.CURRENT_PROJECT_ID:
-        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
+        return "⚠️ No project focused. Use `kompany_project_focus <project_id>` first."
 
     # This is a hint for the agent - actual detection happens in the agent's context
     return """To detect deployment configuration, check for these files in your codebase:
@@ -234,4 +234,4 @@ def monkey_deploy_detect() -> str:
 **Render:**
 - `render.yaml`
 
-Once detected, use `monkey_deploy_create` with the found settings."""
+Once detected, use `kompany_deploy_create` with the found settings."""

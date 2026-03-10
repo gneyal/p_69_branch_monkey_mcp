@@ -8,13 +8,13 @@ from ..mcp_app import mcp
 
 
 @mcp.tool()
-def monkey_domain_list() -> str:
+def kompany_domain_list() -> str:
     """List all business domains for the current project.
 
-    Requires a project to be focused first using monkey_project_focus.
+    Requires a project to be focused first using kompany_project_focus.
     """
     if not state.CURRENT_PROJECT_ID:
-        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first.\n\nUse `monkey_project_list` to see available projects."
+        return "⚠️ No project focused. Use `kompany_project_focus <project_id>` first.\n\nUse `kompany_project_list` to see available projects."
 
     try:
         endpoint = f"/api/domains?project_id={state.CURRENT_PROJECT_ID}"
@@ -36,7 +36,7 @@ def monkey_domain_list() -> str:
 
 
 @mcp.tool()
-def monkey_domain_create(
+def kompany_domain_create(
     name: str,
     description: str = "",
     color: str = "#6366f1",
@@ -58,10 +58,10 @@ def monkey_domain_create(
         width: Domain width in pixels (default: 400)
         height: Domain height in pixels (default: 300)
 
-    Requires a project to be focused first using monkey_project_focus.
+    Requires a project to be focused first using kompany_project_focus.
     """
     if not state.CURRENT_PROJECT_ID:
-        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
+        return "⚠️ No project focused. Use `kompany_project_focus <project_id>` first."
 
     try:
         result = api_post("/api/domains", {
@@ -81,7 +81,7 @@ def monkey_domain_create(
 
 
 @mcp.tool()
-def monkey_domain_update(
+def kompany_domain_update(
     domain_id: str,
     name: str = None,
     description: str = None,
@@ -104,7 +104,7 @@ def monkey_domain_update(
         height: New height (optional)
     """
     if not state.CURRENT_PROJECT_ID:
-        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
+        return "⚠️ No project focused. Use `kompany_project_focus <project_id>` first."
 
     try:
         updates = {}
@@ -133,14 +133,14 @@ def monkey_domain_update(
 
 
 @mcp.tool()
-def monkey_domain_delete(domain_id: str) -> str:
+def kompany_domain_delete(domain_id: str) -> str:
     """Delete a business domain by ID.
 
     Args:
         domain_id: The UUID of the domain to delete
     """
     if not state.CURRENT_PROJECT_ID:
-        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first."
+        return "⚠️ No project focused. Use `kompany_project_focus <project_id>` first."
 
     try:
         api_delete(f"/api/domains/{domain_id}")

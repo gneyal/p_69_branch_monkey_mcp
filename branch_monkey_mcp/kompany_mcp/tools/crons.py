@@ -8,13 +8,13 @@ from ..mcp_app import mcp
 
 
 @mcp.tool()
-def monkey_cron_list() -> str:
+def kompany_cron_list() -> str:
     """List all crons for the current project.
 
-    Requires a project to be focused first using monkey_project_focus.
+    Requires a project to be focused first using kompany_project_focus.
     """
     if not state.CURRENT_PROJECT_ID:
-        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first.\n\nUse `monkey_project_list` to see available projects."
+        return "⚠️ No project focused. Use `kompany_project_focus <project_id>` first.\n\nUse `kompany_project_list` to see available projects."
 
     try:
         result = api_get("/api/crons", params={"project_id": state.CURRENT_PROJECT_ID})
@@ -42,7 +42,7 @@ def monkey_cron_list() -> str:
 
 
 @mcp.tool()
-def monkey_cron_create(
+def kompany_cron_create(
     schedule: str,
     name: str = "Scheduled run",
     agent_id: str = None,
@@ -58,10 +58,10 @@ def monkey_cron_create(
         task_prompt: Instructions the agent receives each run (optional)
         enabled: Whether the cron is active (default: True)
 
-    Requires a project to be focused first using monkey_project_focus.
+    Requires a project to be focused first using kompany_project_focus.
     """
     if not state.CURRENT_PROJECT_ID:
-        return "⚠️ No project focused. Use `monkey_project_focus <project_id>` first.\n\nUse `monkey_project_list` to see available projects."
+        return "⚠️ No project focused. Use `kompany_project_focus <project_id>` first.\n\nUse `kompany_project_list` to see available projects."
 
     try:
         data = {
@@ -84,7 +84,7 @@ def monkey_cron_create(
 
 
 @mcp.tool()
-def monkey_cron_delete(cron_id: str) -> str:
+def kompany_cron_delete(cron_id: str) -> str:
     """Delete a cron schedule by ID.
 
     Args:
@@ -98,7 +98,7 @@ def monkey_cron_delete(cron_id: str) -> str:
 
 
 @mcp.tool()
-def monkey_cron_update(
+def kompany_cron_update(
     cron_id: str,
     name: str = None,
     schedule: str = None,
