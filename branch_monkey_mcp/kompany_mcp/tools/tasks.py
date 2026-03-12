@@ -396,6 +396,82 @@ def kompany_task_complete(
 
 
 @mcp.tool()
+def kompany_task_add_artifact(
+    task_id: str,
+    artifact_type: str,
+    body: str,
+    platform: str = None,
+    title: str = None,
+    subject: str = None,
+    to: str = None,
+    url: str = None,
+    filename: str = None,
+    metadata: str = None
+) -> str:
+    """Add a structured artifact to a task's output.
+
+    Artifacts are typed outputs that the Decision Preparer will package into decisions.
+    Call this once per output item (e.g., once per social post, once per email draft).
+
+    Args:
+        task_id: The UUID of the task
+        artifact_type: Type of artifact. One of:
+            - social_post: Social media post (use platform + body)
+            - email: Email draft (use to + subject + body)
+            - code_pr: Pull request (use title + url + body for summary)
+            - report: Analysis/report (use title + body)
+            - message: Chat/Slack message (use to + body)
+            - file: Generated file/asset (use filename + url)
+            - generic: Anything else (use title + body)
+        body: The main content (post text, email body, PR summary, report content, etc.)
+        platform: For social_post: LinkedIn, X, Instagram, Facebook, etc.
+        title: Title or headline
+        subject: For email: email subject line
+        to: For email/message: recipient(s)
+        url: Link to external resource (PR url, file url, etc.)
+        filename: For file artifacts: the filename
+        metadata: Optional JSON string of extra key-value pairs
+    """
+    try:
+        import json as _json
+
+        artifact = {"type": artifact_type, "body": body}
+        if platform:
+            artifact["platform"] = platform
+        if title:
+            artifact["title"] = title
+        if subject:
+            artifact["subject"] = subject
+        if to:
+            artifact["to"] = to
+        if url:
+            artifact["url"] = url
+        if filename:
+            artifact["filename"] = filename
+        if metadata:
+            try:
+                artifact["metadata"] = _json.loads(metadata)
+            except _json.JSONDecodeError:
+                pass
+
+        # Fetch current artifacts
+        result = api_get(f"/api/tasks/{task_id}")
+        task = result.get("task", result)
+        current_artifacts = task.get("artifacts") or []
+
+        # Append new artifact
+        current_artifacts.append(artifact)
+
+        # Update task
+        api_put(f"/api/tasks/{task_id}", {"artifacts": current_artifacts})
+
+        count = len(current_artifacts)
+        return f"✅ Added {artifact_type} artifact to task (total: {count}). The Decision Preparer will package this into a decision when the task moves to review."
+    except Exception as e:
+        return f"Error adding artifact: {str(e)}"
+
+
+@mcp.tool()
 def kompany_task_search(query: str, status: str = None, version: str = None) -> str:
     """Search tasks by title or description."""
     try:
