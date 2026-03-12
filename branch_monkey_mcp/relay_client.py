@@ -1222,6 +1222,35 @@ def start_server_in_background(port: int = 18081, home_dir: Optional[str] = None
     return thread
 
 
+def install_skills() -> bool:
+    """
+    Install Kompany skills into ~/.claude/skills/kompany/.
+    Copies bundled skill files from the package. Overwrites existing files.
+    Returns True if any files were installed.
+    """
+    skills_src = Path(__file__).parent / "skills" / "kompany"
+    skills_dst = Path.home() / ".claude" / "skills" / "kompany"
+
+    if not skills_src.exists():
+        return False
+
+    try:
+        installed = 0
+        for src_file in skills_src.rglob("*.md"):
+            rel = src_file.relative_to(skills_src)
+            dst_file = skills_dst / rel
+            dst_file.parent.mkdir(parents=True, exist_ok=True)
+            dst_file.write_text(src_file.read_text())
+            installed += 1
+
+        if installed > 0:
+            print(f"[Skills] Installed {installed} kompany skill file(s) to {skills_dst}")
+        return installed > 0
+    except Exception as e:
+        print(f"[Skills] Warning: Could not install skills: {e}")
+        return False
+
+
 def setup_mcp_config(working_dir: str, cloud_url: str = DEFAULT_CLOUD_URL) -> bool:
     """
     Set up MCP config in the project's .mcp.json file.
@@ -1674,6 +1703,9 @@ def main():
     # Set up MCP config unless --no-mcp is specified
     if not args.no_mcp:
         setup_mcp_config(working_dir, args.cloud_url)
+
+    # Install Kompany skills into ~/.claude/skills/
+    install_skills()
 
     # Determine home directory (parent of projects) vs current project
     # Home is typically the Code folder, project is a subfolder

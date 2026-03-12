@@ -43,3 +43,11 @@ Documentation = "https://kompany.dev/install"
 
 [tool.hatch.build.targets.wheel]
 packages = ["branch_monkey_mcp"]
+
+[tool.hatch.build]
+include = [
+    "branch_monkey_mcp/**/*.py",
+    "branch_monkey_mcp/**/*.md",
+    "branch_monkey_mcp/static/**",
+    "branch_monkey_mcp/skills/**",
+]

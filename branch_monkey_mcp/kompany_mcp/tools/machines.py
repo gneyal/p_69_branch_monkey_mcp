@@ -46,7 +46,8 @@ def kompany_machine_create(
     position_y: float = 0,
     metric_unit: str = "",
     leading_metric_name: str = "",
-    machine_type: str = "processor"
+    machine_type: str = "processor",
+    domain_id: str = None
 ) -> str:
     """Create a new machine (automated business process) in the current project.
 
@@ -60,6 +61,7 @@ def kompany_machine_create(
         metric_unit: Output metric name (e.g. "leads", "signups", "revenue")
         leading_metric_name: Input/leading metric name (e.g. "calls made", "emails sent")
         machine_type: generator, processor, funnel, monitor, router, aggregator, syncer, or nurture (default: processor)
+        domain_id: UUID of the domain to place this machine in (optional). Use kompany_domain_list to find domain IDs.
 
     Requires a project to be focused first using kompany_project_focus.
     """
@@ -79,6 +81,8 @@ def kompany_machine_create(
             "machine_type": machine_type,
             "project_id": state.CURRENT_PROJECT_ID
         }
+        if domain_id is not None:
+            payload["domain_id"] = domain_id
         result = api_post("/api/machines", payload)
         machine = result.get("machine", result)
         machine_id = machine.get("id")
@@ -151,7 +155,8 @@ def kompany_machine_update(
     status: str = None,
     position_x: float = None,
     position_y: float = None,
-    agent_id: str = None
+    agent_id: str = None,
+    domain_id: str = None
 ) -> str:
     """Update an existing machine.
 
@@ -164,6 +169,7 @@ def kompany_machine_update(
         position_x: New X position (optional)
         position_y: New Y position (optional)
         agent_id: UUID of the agent to assign (optional)
+        domain_id: UUID of the domain to move this machine to (optional). Use kompany_domain_list to find domain IDs.
     """
     if not state.CURRENT_PROJECT_ID:
         return "⚠️ No project focused. Use `kompany_project_focus <project_id>` first."
@@ -184,6 +190,8 @@ def kompany_machine_update(
             updates["position_y"] = position_y
         if agent_id is not None:
             updates["agent_id"] = agent_id
+        if domain_id is not None:
+            updates["domain_id"] = domain_id
 
         if not updates:
             return "⚠️ No updates provided. Specify at least one field to update."
