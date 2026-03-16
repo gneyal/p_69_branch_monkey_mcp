@@ -59,7 +59,8 @@ def kompany_decision_list(status: str = None) -> str:
                 output += f"   {desc}{'...' if len(d['description']) > 120 else ''}\n"
 
             if d.get("options"):
-                output += f"   Options: {', '.join(d['options'])}\n"
+                labels = [o.get("label", str(o)) if isinstance(o, dict) else o for o in d["options"]]
+                output += f"   Options: {', '.join(labels)}\n"
 
             if d.get("resolved_option"):
                 output += f"   Resolved: {d['resolved_option']} at {d.get('resolved_at', 'unknown')}\n"
@@ -91,7 +92,11 @@ def kompany_decision_create(
     Args:
         title: The decision question (e.g., "Deploy to production?")
         description: Context to help the user decide
-        options: Comma-separated choices (e.g., "Deploy Now, Schedule Later, Skip")
+        options: Comma-separated choices (e.g., "Deploy Now, Schedule Later, Skip") OR a JSON array of structured option objects:
+            '[{"label":"Merge","action":"Merge PR into main","agent_id":"<uuid>"},{"label":"Reject"}]'
+            - label (required): button text shown to user
+            - action (optional): instruction for the executing agent
+            - agent_id (optional): UUID of the agent that executes this option. Get IDs from kompany_agent_list(). Omit for passive options.
         priority: 0 = normal, 1 = high priority
         machine_id: The machine this decision relates to
         agent_id: The agent creating this decision
@@ -116,7 +121,14 @@ def kompany_decision_create(
 
         options_list = []
         if options:
-            options_list = [opt.strip() for opt in options.split(",") if opt.strip()]
+            trimmed = options.strip()
+            if trimmed.startswith("["):
+                try:
+                    options_list = _json.loads(trimmed)
+                except _json.JSONDecodeError:
+                    return "❌ Invalid options JSON. Must be a JSON array of option objects."
+            else:
+                options_list = [opt.strip() for opt in trimmed.split(",") if opt.strip()]
 
         blocks_list = None
         if blocks:
@@ -185,7 +197,7 @@ def kompany_decision_update(
         decision_id: The UUID of the decision to update
         title: New title
         description: New description
-        options: New comma-separated choices
+        options: New comma-separated choices OR JSON array of structured option objects (same format as kompany_decision_create)
         priority: New priority (0 = normal, 1 = high)
         status: New status (pending, approved, rejected, dismissed)
         agent_id: Agent to trigger on approval (set to "none" to clear)
@@ -210,7 +222,14 @@ def kompany_decision_update(
         if status is not None:
             data["status"] = status
         if options is not None:
-            data["options"] = [opt.strip() for opt in options.split(",") if opt.strip()]
+            trimmed = options.strip()
+            if trimmed.startswith("["):
+                try:
+                    data["options"] = _json.loads(trimmed)
+                except _json.JSONDecodeError:
+                    return "❌ Invalid options JSON. Must be a JSON array of option objects."
+            else:
+                data["options"] = [opt.strip() for opt in trimmed.split(",") if opt.strip()]
         if agent_id is not None:
             data["agent_id"] = None if agent_id == "none" else agent_id
         if task_id is not None:
@@ -276,7 +295,8 @@ def kompany_decision_check(decision_id: str) -> str:
             output += f"\n\n**Description:** {desc}{'...' if len(d['description']) > 200 else ''}"
 
         if d.get("options"):
-            output += f"\n**Options:** {', '.join(d['options'])}"
+            labels = [o.get("label", str(o)) if isinstance(o, dict) else o for o in d["options"]]
+            output += f"\n**Options:** {', '.join(labels)}"
 
         blocks = d.get("blocks") or []
         if blocks:

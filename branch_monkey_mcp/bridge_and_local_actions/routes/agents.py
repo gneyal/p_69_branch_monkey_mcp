@@ -6,7 +6,6 @@ import asyncio
 import base64
 import json
 import os
-import shutil
 import tempfile
 from typing import List, Optional
 
@@ -31,6 +30,7 @@ class CreateAgentRequest(BaseModel):
     skip_branch: bool = False  # Legacy: prefer workflow field
     branch: Optional[str] = None
     defer_start: bool = False
+    cli_tool: Optional[str] = None  # 'claude' or 'codex'; defaults to 'claude'
 
 
 class CronCallback(BaseModel):
@@ -51,6 +51,7 @@ class RunAgentRequest(BaseModel):
     instructions: str
     working_dir: Optional[str] = None
     callback: Optional[CronCallback] = None
+    cli_tool: Optional[str] = None  # 'claude' or 'codex'; defaults to 'claude'
 
 
 class TaskExecuteRequest(BaseModel):
@@ -61,6 +62,7 @@ class TaskExecuteRequest(BaseModel):
     description: Optional[str] = None
     local_path: Optional[str] = None
     repository_url: Optional[str] = None
+    cli_tool: Optional[str] = None  # 'claude' or 'codex'; defaults to 'claude'
 
 
 class ImageData(BaseModel):
@@ -139,7 +141,8 @@ async def execute_task(request: TaskExecuteRequest):
         task_title=request.title,
         task_description=request.description,
         working_dir=working_dir,
-        prompt=prompt
+        prompt=prompt,
+        cli_tool=request.cli_tool
     )
 
     return {
@@ -169,7 +172,8 @@ async def create_agent(request: CreateAgentRequest):
         prompt=request.prompt,
         skip_branch=skip_branch,
         branch=request.branch,
-        defer_start=request.defer_start
+        defer_start=request.defer_start,
+        cli_tool=request.cli_tool
     )
 
 
@@ -202,7 +206,8 @@ async def run_agent(request: RunAgentRequest):
         prompt=request.instructions,
         system_prompt=request.system_prompt,
         skip_branch=True,
-        callback=callback_dict
+        callback=callback_dict,
+        cli_tool=request.cli_tool
     )
 
     return {
@@ -370,12 +375,21 @@ async def stream_output(agent_id: str, request: Request):
 
 
 @router.get("/check")
-def check_claude_installed():
-    """Check if Claude Code CLI is installed locally."""
-    claude_path = shutil.which("claude")
+def check_cli_installed():
+    """Check which AI CLI tools are installed locally."""
+    from ..cli_providers import get_available_providers
+
+    providers = get_available_providers()
+
+    # Backwards compatible: 'installed' is True if any provider is available
+    any_installed = any(p["installed"] for p in providers.values())
+    # Claude path for backwards compat
+    claude_info = providers.get("claude", {})
+
     return {
-        "installed": claude_path is not None,
-        "path": claude_path
+        "installed": any_installed,
+        "path": claude_info.get("path"),
+        "providers": providers
     }
 
 

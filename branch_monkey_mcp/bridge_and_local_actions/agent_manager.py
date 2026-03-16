@@ -1,14 +1,13 @@
 """
-Local Agent Manager for Claude Code execution.
+Local Agent Manager for AI CLI execution.
 
-This module manages the lifecycle of local Claude Code agent instances,
+This module manages the lifecycle of local AI agent instances (Claude Code, Codex, etc.),
 including creation, execution, session resumption, and cleanup.
 """
 
 import asyncio
 import json
 import os
-import shutil
 import signal
 import subprocess
 import uuid
@@ -18,6 +17,7 @@ from typing import Dict, List, Optional
 
 from fastapi import HTTPException
 
+from .cli_providers import get_provider, get_available_providers, DEFAULT_CLI, CliProvider
 from .config import get_default_working_dir
 from .git_utils import is_git_repo, get_current_branch, generate_branch_name
 from .worktree import create_worktree, remove_worktree
@@ -25,7 +25,7 @@ from .worktree import create_worktree, remove_worktree
 
 @dataclass
 class LocalAgent:
-    """Represents a running local Claude Code agent."""
+    """Represents a running local AI CLI agent."""
     id: str
     task_id: Optional[str]
     task_number: Optional[int]
@@ -37,6 +37,7 @@ class LocalAgent:
     branch: Optional[str]
     branch_created: bool
     status: str  # prepared, starting, running, paused, completed, failed, stopped
+    cli_tool: str = DEFAULT_CLI  # Which CLI provider to use
     pid: Optional[int] = None
     process: Optional[subprocess.Popen] = None
     output_buffer: List[str] = field(default_factory=list)
@@ -119,13 +120,17 @@ class LocalAgentManager:
         skip_branch: bool = False,
         branch: Optional[str] = None,
         defer_start: bool = False,
-        callback: Optional[Dict] = None
+        callback: Optional[Dict] = None,
+        cli_tool: Optional[str] = None
     ) -> dict:
-        """Create and optionally start a new local Claude Code agent.
+        """Create and optionally start a new local AI agent.
 
         If defer_start=True, sets up worktree/branch/tracking but does NOT spawn
         the CLI process. The session enters "prepared" status and waits for the
         first message via send_input, which calls spawn_cli_process().
+
+        Args:
+            cli_tool: Which CLI to use ('claude', 'codex'). Defaults to 'claude'.
         """
 
         # Clean up stale agents first
@@ -140,11 +145,13 @@ class LocalAgentManager:
                 detail=f"Maximum number of agents ({self.MAX_AGENTS}) reached. Kill some agents first."
             )
 
-        claude_path = shutil.which("claude")
-        if not claude_path:
+        # Resolve CLI provider
+        provider = get_provider(cli_tool)
+        cli_path = provider.is_available()
+        if not cli_path:
             raise HTTPException(
                 status_code=400,
-                detail="Claude Code CLI not found. Install with: npm install -g @anthropic-ai/claude-code"
+                detail=f"{provider.display_name} CLI not found. Install with: {provider.install_hint}"
             )
 
         agent_id = str(uuid.uuid4())[:8]
@@ -200,6 +207,7 @@ class LocalAgentManager:
                 branch=target_branch,
                 branch_created=branch_created,
                 status="prepared",
+                cli_tool=provider.name,
                 callback=callback
             )
             self._agents[agent_id] = agent
@@ -234,6 +242,7 @@ class LocalAgentManager:
             branch=target_branch,
             branch_created=branch_created,
             status="starting",
+            cli_tool=provider.name,
             callback=callback
         )
 
@@ -249,6 +258,7 @@ class LocalAgentManager:
                 "task_title": task_title,
                 "status": agent.status,
                 "type": "local",
+                "cli_tool": agent.cli_tool,
                 "work_dir": work_dir,
                 "worktree_path": worktree_path,
                 "branch": target_branch,
@@ -258,7 +268,7 @@ class LocalAgentManager:
 
         except Exception as e:
             agent.status = "failed"
-            raise HTTPException(status_code=500, detail=f"Failed to start Claude: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Failed to start {provider.display_name}: {str(e)}")
 
     def _build_prompt(
         self,
@@ -301,25 +311,23 @@ Do NOT create another worktree - you are already isolated. Skip any worktree cre
 {json.dumps(task_json, indent=2)}
 ```"""
 
+    def _get_provider(self, agent: LocalAgent) -> CliProvider:
+        """Get the CLI provider for an agent."""
+        return get_provider(agent.cli_tool)
+
     def _start_cli_process(self, agent: LocalAgent, final_prompt: str, system_prompt: Optional[str] = None) -> None:
-        """Spawn the Claude CLI process and start reading output."""
+        """Spawn the CLI process and start reading output."""
+        provider = self._get_provider(agent)
+        cli_cmd = provider.build_run_command(final_prompt, system_prompt=system_prompt)
+
         env = os.environ.copy()
-        env.pop("ANTHROPIC_API_KEY", None)  # Use user's subscription
-        env.pop("CLAUDECODE", None)  # Allow nested launches from within Claude Code
-
-        cmd = [
-            "claude",
-            "-p", final_prompt,
-            "--output-format", "stream-json",
-            "--verbose",
-            "--dangerously-skip-permissions"
-        ]
-
-        if system_prompt:
-            cmd.extend(["--append-system-prompt", system_prompt])
+        for key in cli_cmd.env_overrides:
+            env.pop(key, None)
+        # Always remove CLAUDECODE to allow nested launches
+        env.pop("CLAUDECODE", None)
 
         process = subprocess.Popen(
-            cmd,
+            cli_cmd.args,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             cwd=agent.work_dir,
@@ -332,7 +340,7 @@ Do NOT create another worktree - you are already isolated. Skip any worktree cre
         agent.process = process
         agent.status = "running"
 
-        print(f"[LocalAgent] Started Claude, PID: {process.pid}")
+        print(f"[LocalAgent] Started {provider.display_name}, PID: {process.pid}")
 
         self._output_tasks[agent.id] = asyncio.create_task(
             self._read_json_output(agent)
@@ -364,11 +372,13 @@ Do NOT create another worktree - you are already isolated. Skip any worktree cre
             self._start_cli_process(agent, final_prompt)
         except Exception as e:
             agent.status = "failed"
-            raise HTTPException(status_code=500, detail=f"Failed to start Claude: {str(e)}")
+            provider = self._get_provider(agent)
+            raise HTTPException(status_code=500, detail=f"Failed to start {provider.display_name}: {str(e)}")
 
     async def _read_json_output(self, agent: LocalAgent) -> None:
         """Read JSON output from subprocess and broadcast to listeners."""
         loop = asyncio.get_event_loop()
+        provider = self._get_provider(agent)
 
         def read_line():
             try:
@@ -395,14 +405,20 @@ Do NOT create another worktree - you are already isolated. Skip any worktree cre
                 try:
                     parsed = json.loads(text)
 
-                    # Extract session_id from system init message
-                    if parsed.get("type") == "system" and parsed.get("subtype") == "init":
-                        session_id = parsed.get("session_id")
-                        if session_id:
-                            agent.session_id = session_id
-                            print(f"[LocalAgent] Got session_id: {session_id}")
+                    # Normalize event through CLI provider (handles format differences)
+                    normalized = provider.normalize_event(parsed)
+                    if normalized is None:
+                        continue
 
-                    agent.output_buffer.append({"data": text, "parsed": parsed})
+                    # Extract session_id using provider-specific logic
+                    session_id = provider.extract_session_id(parsed)
+                    if session_id:
+                        agent.session_id = session_id
+                        print(f"[LocalAgent] Got session_id: {session_id}")
+
+                    # Store normalized event for consistent downstream processing
+                    normalized_text = json.dumps(normalized)
+                    agent.output_buffer.append({"data": normalized_text, "parsed": normalized})
                     if len(agent.output_buffer) > 1000:
                         agent.output_buffer.pop(0)
 
@@ -410,17 +426,15 @@ Do NOT create another worktree - you are already isolated. Skip any worktree cre
                         try:
                             await queue.put({
                                 "type": "output",
-                                "data": text,
+                                "data": normalized_text,
                                 "raw": text
                             })
                         except Exception:
                             pass
 
                 except json.JSONDecodeError:
-                    # Filter out known noise from subprocess stderr
-                    noise_prefixes = ("warn:", "Warning:", "DeprecationWarning", "[DEP")
-                    noise_substrings = ("oven-sh/bun", "baseline.zip", "baseline build")
-                    if text.startswith(noise_prefixes) or any(s in text for s in noise_substrings):
+                    # Filter out known noise using provider-specific rules
+                    if provider.is_noise(text):
                         continue
                     for queue in agent.output_listeners:
                         try:
@@ -552,27 +566,21 @@ Do NOT create another worktree - you are already isolated. Skip any worktree cre
         if not agent.session_id:
             return
 
+        provider = self._get_provider(agent)
+        cli_cmd = provider.build_resume_command(message, agent.session_id)
+
         env = os.environ.copy()
-        env.pop("ANTHROPIC_API_KEY", None)
+        for key in cli_cmd.env_overrides:
+            env.pop(key, None)
+        env.pop("CLAUDECODE", None)
 
-        # Image paths are already included in the message text as [Image: /path/to/file]
-        # Claude will use the Read tool to view them
         if image_paths:
-            print(f"[LocalAgent] Message includes {len(image_paths)} image paths for Claude to read")
+            print(f"[LocalAgent] Message includes {len(image_paths)} image paths for CLI to read")
 
-        cmd = [
-            "claude",
-            "-p", message,
-            "--output-format", "stream-json",
-            "--verbose",
-            "--resume", agent.session_id,
-            "--dangerously-skip-permissions"
-        ]
-
-        print(f"[LocalAgent] Resuming session {agent.session_id}")
+        print(f"[LocalAgent] Resuming session {agent.session_id} with {provider.display_name}")
 
         process = subprocess.Popen(
-            cmd,
+            cli_cmd.args,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             cwd=agent.work_dir,
@@ -600,6 +608,7 @@ Do NOT create another worktree - you are already isolated. Skip any worktree cre
             "task_title": agent.task_title,
             "status": agent.status,
             "type": "local",
+            "cli_tool": agent.cli_tool,
             "work_dir": agent.work_dir,
             "worktree_path": agent.worktree_path,
             "branch": agent.branch,
@@ -622,6 +631,7 @@ Do NOT create another worktree - you are already isolated. Skip any worktree cre
                 "task_title": a.task_title,
                 "status": a.status,
                 "type": "local",
+                "cli_tool": a.cli_tool,
                 "branch": a.branch,
                 "worktree_path": a.worktree_path,
                 "created_at": a.created_at.isoformat(),
