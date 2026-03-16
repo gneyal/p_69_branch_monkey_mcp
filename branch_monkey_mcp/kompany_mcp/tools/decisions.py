@@ -170,7 +170,8 @@ def kompany_decision_create(
             except Exception:
                 pass  # Non-critical
 
-        opts_str = f" | Options: {', '.join(options_list)}" if options_list else ""
+        labels = [o.get("label", str(o)) if isinstance(o, dict) else o for o in options_list]
+        opts_str = f" | Options: {', '.join(labels)}" if options_list else ""
         return f"✅ Decision created: **{title}** (ID: `{decision_id}`){opts_str}\n\nThe user will see this in their notification bell."
     except Exception as e:
         return f"Error creating decision: {str(e)}"
