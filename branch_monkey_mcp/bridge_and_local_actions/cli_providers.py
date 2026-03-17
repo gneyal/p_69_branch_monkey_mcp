@@ -301,6 +301,19 @@ class CodexProvider(CliProvider):
     def is_available(self) -> Optional[str]:
         return shutil.which("codex")
 
+    def set_api_key(self, key: str):
+        """Store API key in our config AND register with `codex login --with-api-key`."""
+        super().set_api_key(key)
+        # Also register with Codex's own auth system
+        if self.is_available():
+            try:
+                subprocess.run(
+                    ["codex", "login", "--with-api-key"],
+                    input=key, text=True, capture_output=True, timeout=10,
+                )
+            except Exception:
+                pass  # Best effort — env var injection still works as fallback
+
     def get_auth_status(self) -> dict:
         """Check Codex auth: stored API key or `codex login status`."""
         # 1. Check for stored API key in our config
