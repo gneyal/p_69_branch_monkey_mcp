@@ -8,6 +8,7 @@ for command building, output normalization, and availability checking.
 import json
 import os
 import shutil
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -18,6 +19,11 @@ class CliCommand:
     """A CLI command ready to execute."""
     args: List[str]
     env_overrides: Dict[str, None]  # Keys to remove from env
+    env_inject: Dict[str, str] = None  # Keys to add/set in env
+
+    def __post_init__(self):
+        if self.env_inject is None:
+            self.env_inject = {}
 
 
 class CliProvider:
@@ -26,10 +32,54 @@ class CliProvider:
     name: str = ""
     display_name: str = ""
     install_hint: str = ""
+    api_key_env: str = ""       # Env var name for API key (e.g. ANTHROPIC_API_KEY)
+    api_key_config: str = ""    # Config key in ~/.kompany/config.json
 
     def is_available(self) -> Optional[str]:
         """Return path if CLI is installed, None otherwise."""
         raise NotImplementedError
+
+    def get_auth_status(self) -> dict:
+        """Check authentication status.
+
+        Returns dict with:
+          - authenticated: bool
+          - method: str - 'api_key', 'oauth', 'none'
+          - detail: str - email, key hint, or error message
+        """
+        return {"authenticated": False, "method": "none", "detail": "Not implemented"}
+
+    def get_auth_env(self) -> Dict[str, str]:
+        """Return env vars to inject for authentication.
+
+        Checks: 1) API key in ~/.kompany/config.json, 2) API key in env.
+        Returns dict of env vars to set when spawning the CLI process.
+        """
+        if self.api_key_config:
+            config = _load_config()
+            stored_key = config.get(self.api_key_config)
+            if stored_key:
+                return {self.api_key_env: stored_key}
+        return {}
+
+    def set_api_key(self, key: str):
+        """Store an API key in persistent config."""
+        if not self.api_key_config:
+            raise ValueError(f"{self.display_name} does not support API key auth")
+        _save_config({self.api_key_config: key})
+
+    def clear_api_key(self):
+        """Remove stored API key from config."""
+        if self.api_key_config:
+            config = _load_config()
+            config.pop(self.api_key_config, None)
+            _CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+            with open(_CONFIG_FILE, "w") as f:
+                json.dump(config, f, indent=2)
+
+    def start_device_auth(self) -> Optional[dict]:
+        """Start device auth flow. Returns {url, code} or None if not supported."""
+        return None
 
     def build_run_command(
         self,
@@ -81,9 +131,84 @@ class ClaudeCodeProvider(CliProvider):
     name = "claude"
     display_name = "Claude Code"
     install_hint = "npm install -g @anthropic-ai/claude-code"
+    api_key_env = "ANTHROPIC_API_KEY"
+    api_key_config = "anthropic_api_key"
 
     def is_available(self) -> Optional[str]:
         return shutil.which("claude")
+
+    def get_auth_status(self) -> dict:
+        """Check Claude Code auth: try `claude auth status` (JSON output)."""
+        # 1. Check for stored API key in our config
+        config = _load_config()
+        if config.get(self.api_key_config):
+            key = config[self.api_key_config]
+            hint = key[:8] + "..." + key[-4:] if len(key) > 12 else "***"
+            return {"authenticated": True, "method": "api_key", "detail": f"API key ({hint})"}
+
+        # 2. Check for API key in environment
+        env_key = os.environ.get(self.api_key_env)
+        if env_key:
+            hint = env_key[:8] + "..." + env_key[-4:] if len(env_key) > 12 else "***"
+            return {"authenticated": True, "method": "api_key", "detail": f"API key from env ({hint})"}
+
+        # 3. Check CLI's own auth via `claude auth status`
+        path = self.is_available()
+        if not path:
+            return {"authenticated": False, "method": "none", "detail": "CLI not installed"}
+
+        try:
+            result = subprocess.run(
+                ["claude", "auth", "status"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode == 0:
+                data = json.loads(result.stdout)
+                if data.get("loggedIn"):
+                    email = data.get("email", "")
+                    method = data.get("authMethod", "oauth")
+                    sub = data.get("subscriptionType", "")
+                    detail = f"{email}" + (f" ({sub})" if sub else "")
+                    return {"authenticated": True, "method": method, "detail": detail}
+            return {"authenticated": False, "method": "none", "detail": "Not signed in"}
+        except Exception as e:
+            return {"authenticated": False, "method": "none", "detail": str(e)}
+
+    def start_device_auth(self) -> Optional[dict]:
+        """Start Claude device auth — opens browser via `claude auth login`."""
+        path = self.is_available()
+        if not path:
+            return None
+
+        try:
+            # claude auth login opens the browser directly
+            subprocess.Popen(
+                ["claude", "auth", "login"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return {
+                "type": "browser",
+                "message": "Opening browser for Anthropic sign-in...",
+            }
+        except Exception:
+            return None
+
+    def _build_env_overrides(self) -> Dict[str, None]:
+        """Determine which env vars to strip.
+
+        If user has a stored API key in our config, DON'T strip it — we'll inject it.
+        If no stored key, strip ANTHROPIC_API_KEY so Claude uses its own OAuth.
+        """
+        config = _load_config()
+        if config.get(self.api_key_config):
+            # User has stored an API key — don't strip, we'll inject it
+            return {"CLAUDECODE": None}
+        return {"ANTHROPIC_API_KEY": None, "CLAUDECODE": None}
+
+    def _build_env_inject(self) -> Dict[str, str]:
+        """Return env vars to inject (stored API key)."""
+        return self.get_auth_env()
 
     def build_run_command(self, prompt, system_prompt=None):
         args = [
@@ -98,7 +223,8 @@ class ClaudeCodeProvider(CliProvider):
 
         return CliCommand(
             args=args,
-            env_overrides={"ANTHROPIC_API_KEY": None, "CLAUDECODE": None}
+            env_overrides=self._build_env_overrides(),
+            env_inject=self._build_env_inject(),
         )
 
     def build_resume_command(self, prompt, session_id):
@@ -111,7 +237,8 @@ class ClaudeCodeProvider(CliProvider):
                 "--resume", session_id,
                 "--dangerously-skip-permissions"
             ],
-            env_overrides={"ANTHROPIC_API_KEY": None}
+            env_overrides=self._build_env_overrides(),
+            env_inject=self._build_env_inject(),
         )
 
     def build_oneshot_command(self, prompt):
@@ -122,7 +249,8 @@ class ClaudeCodeProvider(CliProvider):
                 "--output-format", "json",
                 "--dangerously-skip-permissions"
             ],
-            env_overrides={"ANTHROPIC_API_KEY": None}
+            env_overrides=self._build_env_overrides(),
+            env_inject=self._build_env_inject(),
         )
 
     def extract_session_id(self, event):
@@ -142,9 +270,114 @@ class CodexProvider(CliProvider):
     name = "codex"
     display_name = "Codex CLI"
     install_hint = "npm install -g @openai/codex"
+    api_key_env = "OPENAI_API_KEY"
+    api_key_config = "openai_api_key"
 
     def is_available(self) -> Optional[str]:
         return shutil.which("codex")
+
+    def get_auth_status(self) -> dict:
+        """Check Codex auth: stored API key or `codex login status`."""
+        # 1. Check for stored API key in our config
+        config = _load_config()
+        if config.get(self.api_key_config):
+            key = config[self.api_key_config]
+            hint = key[:7] + "..." + key[-4:] if len(key) > 11 else "***"
+            return {"authenticated": True, "method": "api_key", "detail": f"API key ({hint})"}
+
+        # 2. Check for API key in environment
+        env_key = os.environ.get(self.api_key_env)
+        if env_key:
+            hint = env_key[:7] + "..." + env_key[-4:] if len(env_key) > 11 else "***"
+            return {"authenticated": True, "method": "api_key", "detail": f"API key from env ({hint})"}
+
+        # 3. Check CLI's own auth via `codex login status`
+        path = self.is_available()
+        if not path:
+            return {"authenticated": False, "method": "none", "detail": "CLI not installed"}
+
+        try:
+            result = subprocess.run(
+                ["codex", "login", "status"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode == 0:
+                output = result.stdout.strip()
+                return {"authenticated": True, "method": "oauth", "detail": output or "Signed in"}
+            return {"authenticated": False, "method": "none", "detail": "Not signed in"}
+        except Exception as e:
+            return {"authenticated": False, "method": "none", "detail": str(e)}
+
+    def start_device_auth(self) -> Optional[dict]:
+        """Start Codex device auth — runs `codex login --device-auth` and captures URL+code."""
+        path = self.is_available()
+        if not path:
+            return None
+
+        try:
+            result = subprocess.run(
+                ["codex", "login", "--device-auth"],
+                capture_output=True, text=True, timeout=5,
+            )
+            # Parse the output for URL and code
+            import re
+            output = result.stdout + result.stderr
+            # Strip ANSI codes
+            clean = re.sub(r'\x1b\[[0-9;]*m', '', output)
+
+            url_match = re.search(r'(https://\S+)', clean)
+            code_match = re.search(r'([A-Z0-9]{4,5}-[A-Z0-9]{4,5})', clean)
+
+            if url_match:
+                return {
+                    "type": "device_code",
+                    "url": url_match.group(1),
+                    "code": code_match.group(1) if code_match else None,
+                    "message": "Visit the URL and enter the code to sign in",
+                }
+            return None
+        except subprocess.TimeoutExpired:
+            # The process may hang waiting for auth — that's expected
+            # Re-run in background and capture initial output
+            try:
+                proc = subprocess.Popen(
+                    ["codex", "login", "--device-auth"],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                )
+                import re
+                import select
+                # Read available output for up to 3 seconds
+                import time
+                output = ""
+                end_time = time.time() + 3
+                while time.time() < end_time:
+                    if proc.stdout and proc.stdout.readable():
+                        line = proc.stdout.readline()
+                        if line:
+                            output += line
+                        else:
+                            break
+                    else:
+                        break
+
+                clean = re.sub(r'\x1b\[[0-9;]*m', '', output)
+                url_match = re.search(r'(https://\S+)', clean)
+                code_match = re.search(r'([A-Z0-9]{4,5}-[A-Z0-9]{4,5})', clean)
+
+                if url_match:
+                    return {
+                        "type": "device_code",
+                        "url": url_match.group(1),
+                        "code": code_match.group(1) if code_match else None,
+                        "message": "Visit the URL and enter the code to sign in",
+                        "_process": proc,  # Keep process alive for polling
+                    }
+                proc.kill()
+            except Exception:
+                pass
+            return None
+        except Exception:
+            return None
 
     def build_run_command(self, prompt, system_prompt=None):
         args = [
@@ -158,11 +391,11 @@ class CodexProvider(CliProvider):
 
         return CliCommand(
             args=args,
-            env_overrides={}
+            env_overrides={},
+            env_inject=self.get_auth_env(),
         )
 
     def build_resume_command(self, prompt, session_id):
-        # Codex uses `codex resume <session_id>` then continues with the prompt
         return CliCommand(
             args=[
                 "codex",
@@ -171,7 +404,8 @@ class CodexProvider(CliProvider):
                 "--json",
                 "--resume", session_id,
             ],
-            env_overrides={}
+            env_overrides={},
+            env_inject=self.get_auth_env(),
         )
 
     def build_oneshot_command(self, prompt):
@@ -182,7 +416,8 @@ class CodexProvider(CliProvider):
                 "--full-auto",
                 "--json",
             ],
-            env_overrides={}
+            env_overrides={},
+            env_inject=self.get_auth_env(),
         )
 
     def normalize_event(self, raw_json):
@@ -318,11 +553,12 @@ def get_provider(name: Optional[str] = None) -> CliProvider:
 
 
 def get_available_providers() -> Dict[str, dict]:
-    """Return info about all registered providers and their availability."""
+    """Return info about all registered providers and their availability + auth status."""
     default = get_default_cli()
     result = {}
     for name, provider in _PROVIDERS.items():
         path = provider.is_available()
+        auth = provider.get_auth_status()
         result[name] = {
             "name": name,
             "display_name": provider.display_name,
@@ -330,5 +566,8 @@ def get_available_providers() -> Dict[str, dict]:
             "path": path,
             "install_hint": provider.install_hint,
             "is_default": name == default,
+            "authenticated": auth.get("authenticated", False),
+            "auth_method": auth.get("method", "none"),
+            "auth_detail": auth.get("detail", ""),
         }
     return result

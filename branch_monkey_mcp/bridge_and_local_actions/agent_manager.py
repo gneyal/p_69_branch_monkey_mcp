@@ -325,6 +325,9 @@ Do NOT create another worktree - you are already isolated. Skip any worktree cre
             env.pop(key, None)
         # Always remove CLAUDECODE to allow nested launches
         env.pop("CLAUDECODE", None)
+        # Inject auth env vars (e.g. API keys from config)
+        if cli_cmd.env_inject:
+            env.update(cli_cmd.env_inject)
 
         process = subprocess.Popen(
             cli_cmd.args,
@@ -573,6 +576,8 @@ Do NOT create another worktree - you are already isolated. Skip any worktree cre
         for key in cli_cmd.env_overrides:
             env.pop(key, None)
         env.pop("CLAUDECODE", None)
+        if cli_cmd.env_inject:
+            env.update(cli_cmd.env_inject)
 
         if image_paths:
             print(f"[LocalAgent] Message includes {len(image_paths)} image paths for CLI to read")

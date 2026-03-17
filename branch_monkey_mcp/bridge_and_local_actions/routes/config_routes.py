@@ -14,7 +14,7 @@ from ..config import (
     set_default_working_dir,
     get_app_config,
 )
-from ..cli_providers import get_available_providers, get_default_cli, set_default_cli
+from ..cli_providers import get_available_providers, get_default_cli, set_default_cli, get_provider
 from ..git_utils import get_git_root
 
 router = APIRouter()
@@ -27,6 +27,17 @@ class WorkingDirectoryRequest(BaseModel):
 
 class CliPreferenceRequest(BaseModel):
     """Request to set default CLI tool."""
+    cli_tool: str
+
+
+class CliApiKeyRequest(BaseModel):
+    """Request to set an API key for a CLI provider."""
+    cli_tool: str
+    api_key: str
+
+
+class CliDeviceAuthRequest(BaseModel):
+    """Request to start device auth for a CLI provider."""
     cli_tool: str
 
 
@@ -117,6 +128,79 @@ def set_cli_config(request: CliPreferenceRequest):
         "status": "ok",
         "default_cli": request.cli_tool,
         "providers": get_available_providers(),
+    }
+
+
+@router.post("/config/cli/api-key")
+def set_cli_api_key(request: CliApiKeyRequest):
+    """Set an API key for a CLI provider."""
+    try:
+        provider = get_provider(request.cli_tool)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if not provider.api_key_config:
+        raise HTTPException(status_code=400, detail=f"{provider.display_name} does not support API key auth")
+
+    provider.set_api_key(request.api_key)
+
+    return {
+        "status": "ok",
+        "cli_tool": request.cli_tool,
+        "auth": provider.get_auth_status(),
+    }
+
+
+@router.delete("/config/cli/api-key/{cli_tool}")
+def clear_cli_api_key(cli_tool: str):
+    """Remove a stored API key for a CLI provider."""
+    try:
+        provider = get_provider(cli_tool)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    provider.clear_api_key()
+
+    return {
+        "status": "ok",
+        "cli_tool": cli_tool,
+        "auth": provider.get_auth_status(),
+    }
+
+
+@router.post("/config/cli/device-auth")
+def start_cli_device_auth(request: CliDeviceAuthRequest):
+    """Start device auth flow for a CLI provider. Returns URL + code."""
+    try:
+        provider = get_provider(request.cli_tool)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    result = provider.start_device_auth()
+    if not result:
+        raise HTTPException(status_code=400, detail=f"{provider.display_name} does not support device auth or is not installed")
+
+    # Don't return internal _process handle
+    result.pop("_process", None)
+
+    return {
+        "status": "ok",
+        "cli_tool": request.cli_tool,
+        **result,
+    }
+
+
+@router.get("/config/cli/auth/{cli_tool}")
+def get_cli_auth_status(cli_tool: str):
+    """Get auth status for a specific CLI provider."""
+    try:
+        provider = get_provider(cli_tool)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    return {
+        "cli_tool": cli_tool,
+        **provider.get_auth_status(),
     }
 
 

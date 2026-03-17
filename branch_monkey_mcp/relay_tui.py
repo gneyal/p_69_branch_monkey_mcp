@@ -441,10 +441,16 @@ class RelayTUI:
         default_cli = s.get("default_cli", "claude")
         default_provider = providers.get(default_cli, {})
         cli_display = default_provider.get("display_name", default_cli.title())
-        installed_count = sum(1 for p in providers.values() if p.get("installed"))
+        cli_authed = default_provider.get("authenticated", False)
         self._put(stdscr, y, lbl_col, "AI CLI", self._dim())
         self._put(stdscr, y, val_col, cli_display, self._bold())
-        self._put(stdscr, y, val_col + len(cli_display) + 1, "[C]", self._dim())
+        # Auth status dot
+        dot_x = val_col + len(cli_display) + 1
+        if cli_authed:
+            self._put(stdscr, y, dot_x, "\u25cf", self._green())
+        else:
+            self._put(stdscr, y, dot_x, "\u25cb", self._red())
+        self._put(stdscr, y, dot_x + 2, "[C]", self._dim())
         y += 1
 
         dashboard_url = s.get("dashboard_url", f"http://localhost:{s['port']}/")
@@ -837,7 +843,7 @@ class RelayTUI:
             self.state["cli_prompt"] = "done"
 
     def _draw_cli_prompt(self, stdscr, y, col, bar_w):
-        """Draw the CLI provider selection screen."""
+        """Draw the CLI provider selection screen with auth status."""
         lbl_col = col + 2
         providers = self.state.get("cli_providers", {})
 
@@ -852,12 +858,26 @@ class RelayTUI:
         for i, name in enumerate(installed):
             p = providers[name]
             display = p.get("display_name", name)
+            authed = p.get("authenticated", False)
+            auth_detail = p.get("auth_detail", "")
+
+            # Provider name
             if i == self._cli_selected:
                 self._put(stdscr, y, lbl_col, f"  \u25b8 {i+1}.", self._cyan() | self._bold())
                 self._put(stdscr, y, lbl_col + 7, display, self._cyan() | self._bold())
             else:
                 self._put(stdscr, y, lbl_col + 4, f"{i+1}.", self._dim())
                 self._put(stdscr, y, lbl_col + 7, display)
+
+            # Auth status indicator
+            auth_x = lbl_col + 7 + len(display) + 2
+            if authed:
+                self._put(stdscr, y, auth_x, "\u25cf", self._green())
+                detail_str = auth_detail[:bar_w - auth_x - col + 2] if auth_detail else "Authenticated"
+                self._put(stdscr, y, auth_x + 2, detail_str, self._dim())
+            else:
+                self._put(stdscr, y, auth_x, "\u25cb", self._red())
+                self._put(stdscr, y, auth_x + 2, "Not signed in", self._dim())
             y += 1
 
         if not_installed:
