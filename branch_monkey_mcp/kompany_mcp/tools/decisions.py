@@ -59,7 +59,7 @@ def kompany_decision_list(status: str = None) -> str:
                 output += f"   {desc}{'...' if len(d['description']) > 120 else ''}\n"
 
             if d.get("options"):
-                labels = [o.get("label", str(o)) if isinstance(o, dict) else o for o in d["options"]]
+                labels = [o.get("label", str(o)) if isinstance(o, dict) else str(o) for o in d["options"]]
                 output += f"   Options: {', '.join(labels)}\n"
 
             if d.get("resolved_option"):
@@ -170,7 +170,8 @@ def kompany_decision_create(
             except Exception:
                 pass  # Non-critical
 
-        opts_str = f" | Options: {', '.join(options_list)}" if options_list else ""
+        opts_labels = [o.get("label", str(o)) if isinstance(o, dict) else str(o) for o in options_list] if options_list else []
+        opts_str = f" | Options: {', '.join(opts_labels)}" if opts_labels else ""
         return f"✅ Decision created: **{title}** (ID: `{decision_id}`){opts_str}\n\nThe user will see this in their notification bell."
     except Exception as e:
         return f"Error creating decision: {str(e)}"
@@ -295,7 +296,7 @@ def kompany_decision_check(decision_id: str) -> str:
             output += f"\n\n**Description:** {desc}{'...' if len(d['description']) > 200 else ''}"
 
         if d.get("options"):
-            labels = [o.get("label", str(o)) if isinstance(o, dict) else o for o in d["options"]]
+            labels = [o.get("label", str(o)) if isinstance(o, dict) else str(o) for o in d["options"]]
             output += f"\n**Options:** {', '.join(labels)}"
 
         blocks = d.get("blocks") or []
