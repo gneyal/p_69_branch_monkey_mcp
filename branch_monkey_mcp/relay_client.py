@@ -1330,11 +1330,10 @@ def _run_with_tui(args, home_dir, current_project, onboarding_needed=False):
         cli_providers = get_available_providers()
         default_cli = get_default_cli()
         installed_clis = [n for n, p in cli_providers.items() if p.get("installed")]
-        # If no default saved yet and multiple CLIs available, prompt on first run
+        # Show CLI selection on first run (after onboarding/launchd) if not yet configured
         _cli_prompt_needed = (
-            not onboarding_needed
-            and "default_cli" not in persistent_cfg
-            and len(installed_clis) > 1
+            "default_cli" not in persistent_cfg
+            and len(installed_clis) >= 1
         )
     except Exception:
         cli_providers = {}

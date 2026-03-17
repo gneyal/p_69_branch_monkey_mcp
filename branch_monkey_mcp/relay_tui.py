@@ -297,10 +297,9 @@ class RelayTUI:
                 # Open CLI selection prompt
                 providers = self.state.get("cli_providers", {})
                 installed = [n for n, p in providers.items() if p.get("installed")]
-                if installed:
-                    current = self.state.get("default_cli", "claude")
-                    self._cli_selected = installed.index(current) if current in installed else 0
-                    self.state["cli_prompt"] = "pending"
+                current = self.state.get("default_cli", "claude")
+                self._cli_selected = installed.index(current) if current in installed else 0
+                self.state["cli_prompt"] = "pending"
         elif key == ord("d") or key == ord("D"):
             if self._view == "dashboard" and self._on_logout:
                 self._on_logout()
@@ -445,8 +444,7 @@ class RelayTUI:
         installed_count = sum(1 for p in providers.values() if p.get("installed"))
         self._put(stdscr, y, lbl_col, "AI CLI", self._dim())
         self._put(stdscr, y, val_col, cli_display, self._bold())
-        if installed_count > 1:
-            self._put(stdscr, y, val_col + len(cli_display) + 1, "[C]", self._dim())
+        self._put(stdscr, y, val_col + len(cli_display) + 1, "[C]", self._dim())
         y += 1
 
         dashboard_url = s.get("dashboard_url", f"http://localhost:{s['port']}/")
@@ -629,10 +627,9 @@ class RelayTUI:
         s_label = "Uninstall" if ld in ("running", "installed") else "Startup"
         self._put(stdscr, footer_y, x + 4, s_label, self._dim())
         x += 4 + len(s_label) + 2
-        if installed_count > 1:
-            self._put(stdscr, footer_y, x, "[C]", self._cyan() | self._bold())
-            self._put(stdscr, footer_y, x + 4, "CLI", self._dim())
-            x += 9
+        self._put(stdscr, footer_y, x, "[C]", self._cyan() | self._bold())
+        self._put(stdscr, footer_y, x + 4, "CLI", self._dim())
+        x += 9
         self._put(stdscr, footer_y, x, "[V]", self._cyan() | self._bold())
         self._put(stdscr, footer_y, x + 4, "Verbose", self._dim())
         x += 13
