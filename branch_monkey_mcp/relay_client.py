@@ -1395,6 +1395,36 @@ def _run_with_tui(args, home_dir, current_project, onboarding_needed=False):
 
     tui._on_cli_set = on_cli_set
 
+    # Callback when user sets an API key for a provider
+    def on_cli_api_key(provider_name, api_key):
+        try:
+            from .bridge_and_local_actions.cli_providers import get_provider, get_available_providers
+            provider = get_provider(provider_name)
+            provider.set_api_key(api_key)
+            print(f"[Relay] API key set for {provider.display_name}")
+            # Refresh providers to update auth status in TUI
+            tui.update(cli_providers=get_available_providers())
+        except Exception as e:
+            print(f"[Relay] Failed to set API key: {e}")
+
+    tui._on_cli_api_key = on_cli_api_key
+
+    # Callback when user starts device auth for a provider
+    def on_cli_device_auth(provider_name):
+        try:
+            from .bridge_and_local_actions.cli_providers import get_provider
+            provider = get_provider(provider_name)
+            result = provider.start_device_auth()
+            if result:
+                result.pop("_process", None)
+                return result
+            return None
+        except Exception as e:
+            print(f"[Relay] Failed to start device auth: {e}")
+            return None
+
+    tui._on_cli_device_auth = on_cli_device_auth
+
     # Detect current launchd status
     if sys.platform == "darwin":
         ld_status = check_launchd_status()

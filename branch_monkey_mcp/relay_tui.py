@@ -119,6 +119,13 @@ class RelayTUI:
         self._launchd_selected = 0  # 0=Yes, 1=No for the prompt menu
         self._on_cli_set = None  # Callback when user selects a CLI provider
         self._cli_selected = 0  # Index into installed providers list
+        # CLI auth sub-modes within CLI prompt
+        self._cli_auth_mode = None  # None, "api_key", "device_auth"
+        self._cli_api_key_input = ""
+        self._cli_api_key_cursor = 0
+        self._cli_device_auth = None  # {url, code, message} from device auth
+        self._on_cli_api_key = None  # Callback(provider_name, key)
+        self._on_cli_device_auth = None  # Callback(provider_name) -> {url, code}
         self._verbose = False
 
     def install_capture(self):
@@ -825,35 +832,184 @@ class RelayTUI:
         """Handle keyboard input during CLI selection prompt."""
         providers = self.state.get("cli_providers", {})
         installed = [n for n, p in providers.items() if p.get("installed")]
-        if not installed:
+        all_names = list(providers.keys())
+
+        # --- API key input sub-mode ---
+        if self._cli_auth_mode == "api_key":
+            if key in (curses.KEY_ENTER, 10, 13):
+                api_key = self._cli_api_key_input.strip()
+                if api_key and self._on_cli_api_key:
+                    name = (installed[self._cli_selected] if self._cli_selected < len(installed)
+                            else all_names[self._cli_selected] if self._cli_selected < len(all_names)
+                            else None)
+                    if name:
+                        self._on_cli_api_key(name, api_key)
+                self._cli_auth_mode = None
+                self._cli_api_key_input = ""
+                self._cli_api_key_cursor = 0
+            elif key == 27:  # Escape — cancel
+                self._cli_auth_mode = None
+                self._cli_api_key_input = ""
+                self._cli_api_key_cursor = 0
+            elif key in (curses.KEY_BACKSPACE, 127, 8):
+                if self._cli_api_key_cursor > 0:
+                    self._cli_api_key_input = (
+                        self._cli_api_key_input[: self._cli_api_key_cursor - 1]
+                        + self._cli_api_key_input[self._cli_api_key_cursor :]
+                    )
+                    self._cli_api_key_cursor -= 1
+            elif key == curses.KEY_LEFT:
+                self._cli_api_key_cursor = max(0, self._cli_api_key_cursor - 1)
+            elif key == curses.KEY_RIGHT:
+                self._cli_api_key_cursor = min(len(self._cli_api_key_input), self._cli_api_key_cursor + 1)
+            elif key == curses.KEY_HOME or key == 1:  # Ctrl-A
+                self._cli_api_key_cursor = 0
+            elif key == curses.KEY_END or key == 5:  # Ctrl-E
+                self._cli_api_key_cursor = len(self._cli_api_key_input)
+            elif 32 <= key <= 126:
+                ch = chr(key)
+                self._cli_api_key_input = (
+                    self._cli_api_key_input[: self._cli_api_key_cursor]
+                    + ch
+                    + self._cli_api_key_input[self._cli_api_key_cursor :]
+                )
+                self._cli_api_key_cursor += 1
+            return
+
+        # --- Device auth display sub-mode ---
+        if self._cli_auth_mode == "device_auth":
+            if key in (curses.KEY_ENTER, 10, 13, 27):  # Enter or Escape
+                self._cli_auth_mode = None
+                self._cli_device_auth = None
+            return
+
+        # --- Main CLI selection ---
+        if not installed and not all_names:
             self.state["cli_prompt"] = "done"
             return
+
+        selectable = installed if installed else all_names
 
         if key in (curses.KEY_UP, ord("k")):
             self._cli_selected = max(0, self._cli_selected - 1)
         elif key in (curses.KEY_DOWN, ord("j")):
-            self._cli_selected = min(len(installed) - 1, self._cli_selected + 1)
+            self._cli_selected = min(len(selectable) - 1, self._cli_selected + 1)
         elif key in (curses.KEY_ENTER, 10, 13):
-            chosen = installed[self._cli_selected]
-            self.state["default_cli"] = chosen
-            self.state["cli_prompt"] = "done"
-            if self._on_cli_set:
-                self._on_cli_set(chosen)
+            if self._cli_selected < len(installed):
+                chosen = installed[self._cli_selected]
+                self.state["default_cli"] = chosen
+                self.state["cli_prompt"] = "done"
+                if self._on_cli_set:
+                    self._on_cli_set(chosen)
         elif key == 27:  # Escape — cancel
             self.state["cli_prompt"] = "done"
+        elif key == ord("a") or key == ord("A"):
+            # Enter API key for selected provider
+            self._cli_auth_mode = "api_key"
+            self._cli_api_key_input = ""
+            self._cli_api_key_cursor = 0
+        elif key == ord("s") or key == ord("S"):
+            # Start device auth for selected provider
+            name = (installed[self._cli_selected] if self._cli_selected < len(installed)
+                    else all_names[self._cli_selected] if self._cli_selected < len(all_names)
+                    else None)
+            if name and self._on_cli_device_auth:
+                result = self._on_cli_device_auth(name)
+                if result:
+                    self._cli_device_auth = result
+                    self._cli_auth_mode = "device_auth"
 
     def _draw_cli_prompt(self, stdscr, y, col, bar_w):
         """Draw the CLI provider selection screen with auth status."""
         lbl_col = col + 2
+        h, w = stdscr.getmaxyx()
         providers = self.state.get("cli_providers", {})
+        installed = [n for n, p in providers.items() if p.get("installed")]
+        not_installed = [n for n, p in providers.items() if not p.get("installed")]
+
+        # --- API key input sub-screen ---
+        if self._cli_auth_mode == "api_key":
+            sel_name = installed[self._cli_selected] if self._cli_selected < len(installed) else "?"
+            sel_provider = providers.get(sel_name, {})
+            display = sel_provider.get("display_name", sel_name)
+
+            self._put(stdscr, y, lbl_col, f"Set API Key for {display}", self._bold())
+            y += 2
+            env_var = "ANTHROPIC_API_KEY" if sel_name == "claude" else "OPENAI_API_KEY"
+            self._put(stdscr, y, lbl_col, f"Paste your {env_var}:", self._dim())
+            y += 2
+
+            # Key input (masked)
+            self._put(stdscr, y, lbl_col, "Key:", self._dim())
+            input_x = lbl_col + 6
+            field_w = max(30, bar_w - input_x + col)
+            visible = self._cli_api_key_input[:field_w]
+            # Show first 8 chars, mask the rest
+            if len(visible) > 8:
+                masked = visible[:8] + "\u2022" * (len(visible) - 8)
+            else:
+                masked = visible
+            self._put(stdscr, y, input_x, masked, self._bold() | self._cyan())
+
+            cursor_x = input_x + min(self._cli_api_key_cursor, field_w)
+            if 0 <= cursor_x < w - 1:
+                try:
+                    curses.curs_set(1)
+                    stdscr.move(y, cursor_x)
+                except curses.error:
+                    pass
+            y += 2
+
+            self._hline(stdscr, y, col, bar_w)
+            y += 1
+            x = lbl_col
+            self._put(stdscr, y, x, "[Enter]", self._cyan() | self._bold())
+            self._put(stdscr, y, x + 8, "Save", self._dim())
+            x += 16
+            self._put(stdscr, y, x, "[Esc]", self._cyan() | self._bold())
+            self._put(stdscr, y, x + 6, "Cancel", self._dim())
+            return
+
+        # --- Device auth display sub-screen ---
+        if self._cli_auth_mode == "device_auth" and self._cli_device_auth:
+            da = self._cli_device_auth
+            sel_name = installed[self._cli_selected] if self._cli_selected < len(installed) else "?"
+            sel_provider = providers.get(sel_name, {})
+            display = sel_provider.get("display_name", sel_name)
+
+            self._put(stdscr, y, lbl_col, f"Sign in to {display}", self._bold())
+            y += 2
+
+            if da.get("type") == "device_code":
+                self._put(stdscr, y, lbl_col, "1. Open this link in your browser:", self._dim())
+                y += 1
+                url = da.get("url", "")
+                self._put(stdscr, y, lbl_col + 3, url, self._cyan() | self._bold())
+                y += 2
+                code = da.get("code")
+                if code:
+                    self._put(stdscr, y, lbl_col, "2. Enter this code:", self._dim())
+                    y += 1
+                    self._put(stdscr, y, lbl_col + 3, code, self._green() | self._bold())
+                    y += 2
+                self._put(stdscr, y, lbl_col, "Waiting for approval...", self._yellow())
+            elif da.get("type") == "browser":
+                self._put(stdscr, y, lbl_col, da.get("message", "Opening browser..."), self._yellow())
+            y += 2
+
+            self._hline(stdscr, y, col, bar_w)
+            y += 1
+            self._put(stdscr, y, lbl_col, "[Enter/Esc]", self._cyan() | self._bold())
+            self._put(stdscr, y, lbl_col + 12, "Back", self._dim())
+            return
+
+        # --- Main CLI selection screen ---
+        curses.curs_set(0)
 
         self._put(stdscr, y, lbl_col, "Select AI CLI", self._bold())
         y += 2
         self._put(stdscr, y, lbl_col, "Choose the default CLI tool for running agents.", self._dim())
         y += 2
-
-        installed = [n for n, p in providers.items() if p.get("installed")]
-        not_installed = [n for n, p in providers.items() if not p.get("installed")]
 
         for i, name in enumerate(installed):
             p = providers[name]
@@ -869,7 +1025,7 @@ class RelayTUI:
                 self._put(stdscr, y, lbl_col + 4, f"{i+1}.", self._dim())
                 self._put(stdscr, y, lbl_col + 7, display)
 
-            # Auth status indicator
+            # Auth status
             auth_x = lbl_col + 7 + len(display) + 2
             if authed:
                 self._put(stdscr, y, auth_x, "\u25cf", self._green())
@@ -902,6 +1058,12 @@ class RelayTUI:
         self._put(stdscr, y, x, "[Enter]", self._cyan() | self._bold())
         self._put(stdscr, y, x + 8, "Confirm", self._dim())
         x += 18
+        self._put(stdscr, y, x, "[A]", self._cyan() | self._bold())
+        self._put(stdscr, y, x + 4, "API Key", self._dim())
+        x += 13
+        self._put(stdscr, y, x, "[S]", self._cyan() | self._bold())
+        self._put(stdscr, y, x + 4, "Sign in", self._dim())
+        x += 13
         self._put(stdscr, y, x, "[Esc]", self._cyan() | self._bold())
         self._put(stdscr, y, x + 6, "Cancel", self._dim())
 
