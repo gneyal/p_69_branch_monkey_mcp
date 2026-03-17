@@ -1410,20 +1410,43 @@ def _run_with_tui(args, home_dir, current_project, onboarding_needed=False):
     tui._on_cli_api_key = on_cli_api_key
 
     # Callback when user starts device auth for a provider
+    # Runs in a background thread to avoid freezing the TUI
     def on_cli_device_auth(provider_name):
-        try:
-            from .bridge_and_local_actions.cli_providers import get_provider
-            provider = get_provider(provider_name)
-            result = provider.start_device_auth()
-            if result:
-                result.pop("_process", None)
-                return result
-            return None
-        except Exception as e:
-            print(f"[Relay] Failed to start device auth: {e}")
-            return None
+        import threading
+
+        def _run():
+            try:
+                from .bridge_and_local_actions.cli_providers import get_provider, get_available_providers
+                provider = get_provider(provider_name)
+                result = provider.start_device_auth()
+                if result:
+                    result.pop("_process", None)
+                    tui._cli_device_auth = result
+                    tui._cli_auth_mode = "device_auth"
+                else:
+                    print(f"[Relay] Device auth not available for {provider_name}")
+                    tui._cli_auth_mode = None
+            except Exception as e:
+                print(f"[Relay] Failed to start device auth: {e}")
+                tui._cli_auth_mode = None
+
+        # Show "connecting..." immediately, result arrives async
+        tui._cli_device_auth = {"type": "browser", "message": "Starting sign-in..."}
+        tui._cli_auth_mode = "device_auth"
+        threading.Thread(target=_run, daemon=True).start()
+        return True  # Signal that auth was started (TUI switches to device_auth view)
 
     tui._on_cli_device_auth = on_cli_device_auth
+
+    # Callback to refresh CLI provider status (after auth changes)
+    def on_cli_refresh():
+        try:
+            from .bridge_and_local_actions.cli_providers import get_available_providers
+            tui.update(cli_providers=get_available_providers())
+        except Exception:
+            pass
+
+    tui._on_cli_refresh = on_cli_refresh
 
     # Detect current launchd status
     if sys.platform == "darwin":

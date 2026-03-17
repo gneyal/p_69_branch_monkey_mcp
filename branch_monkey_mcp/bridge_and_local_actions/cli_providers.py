@@ -176,20 +176,25 @@ class ClaudeCodeProvider(CliProvider):
 
     def start_device_auth(self) -> Optional[dict]:
         """Start Claude device auth — opens browser via `claude auth login`."""
+        import webbrowser
+
         path = self.is_available()
         if not path:
             return None
 
         try:
-            # claude auth login opens the browser directly
+            # claude auth login is interactive — spawn it detached.
+            # It opens the browser automatically for Anthropic OAuth.
             subprocess.Popen(
                 ["claude", "auth", "login"],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
             )
             return {
                 "type": "browser",
                 "message": "Opening browser for Anthropic sign-in...",
+                "url": "https://console.anthropic.com",
             }
         except Exception:
             return None
@@ -310,71 +315,49 @@ class CodexProvider(CliProvider):
 
     def start_device_auth(self) -> Optional[dict]:
         """Start Codex device auth — runs `codex login --device-auth` and captures URL+code."""
+        import re
+        import time
+
         path = self.is_available()
         if not path:
             return None
 
         try:
-            result = subprocess.run(
+            # Use Popen so the process stays alive while user completes auth in browser.
+            # Read lines until we capture the URL and code, then return.
+            proc = subprocess.Popen(
                 ["codex", "login", "--device-auth"],
-                capture_output=True, text=True, timeout=5,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
             )
-            # Parse the output for URL and code
-            import re
-            output = result.stdout + result.stderr
-            # Strip ANSI codes
+
+            output = ""
+            end_time = time.time() + 8
+            while time.time() < end_time:
+                line = proc.stdout.readline()
+                if not line:
+                    break
+                output += line
+                # Stop once we see the device code pattern
+                if re.search(r'[A-Z0-9]{4,5}-[A-Z0-9]{4,5}', line):
+                    break
+
+            # Strip ANSI escape codes
             clean = re.sub(r'\x1b\[[0-9;]*m', '', output)
 
             url_match = re.search(r'(https://\S+)', clean)
             code_match = re.search(r'([A-Z0-9]{4,5}-[A-Z0-9]{4,5})', clean)
 
             if url_match:
+                # Don't kill the process — it needs to stay alive to complete
+                # the auth flow when the user approves in the browser.
                 return {
                     "type": "device_code",
                     "url": url_match.group(1),
                     "code": code_match.group(1) if code_match else None,
                     "message": "Visit the URL and enter the code to sign in",
                 }
-            return None
-        except subprocess.TimeoutExpired:
-            # The process may hang waiting for auth — that's expected
-            # Re-run in background and capture initial output
-            try:
-                proc = subprocess.Popen(
-                    ["codex", "login", "--device-auth"],
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                )
-                import re
-                import select
-                # Read available output for up to 3 seconds
-                import time
-                output = ""
-                end_time = time.time() + 3
-                while time.time() < end_time:
-                    if proc.stdout and proc.stdout.readable():
-                        line = proc.stdout.readline()
-                        if line:
-                            output += line
-                        else:
-                            break
-                    else:
-                        break
 
-                clean = re.sub(r'\x1b\[[0-9;]*m', '', output)
-                url_match = re.search(r'(https://\S+)', clean)
-                code_match = re.search(r'([A-Z0-9]{4,5}-[A-Z0-9]{4,5})', clean)
-
-                if url_match:
-                    return {
-                        "type": "device_code",
-                        "url": url_match.group(1),
-                        "code": code_match.group(1) if code_match else None,
-                        "message": "Visit the URL and enter the code to sign in",
-                        "_process": proc,  # Keep process alive for polling
-                    }
-                proc.kill()
-            except Exception:
-                pass
+            proc.kill()
             return None
         except Exception:
             return None

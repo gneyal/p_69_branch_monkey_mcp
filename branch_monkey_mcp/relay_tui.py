@@ -125,7 +125,8 @@ class RelayTUI:
         self._cli_api_key_cursor = 0
         self._cli_device_auth = None  # {url, code, message} from device auth
         self._on_cli_api_key = None  # Callback(provider_name, key)
-        self._on_cli_device_auth = None  # Callback(provider_name) -> {url, code}
+        self._on_cli_device_auth = None  # Callback(provider_name) -> starts async auth
+        self._on_cli_refresh = None  # Callback() -> refreshes provider state
         self._verbose = False
 
     def install_capture(self):
@@ -847,6 +848,9 @@ class RelayTUI:
                 self._cli_auth_mode = None
                 self._cli_api_key_input = ""
                 self._cli_api_key_cursor = 0
+                # Refresh provider status after key change
+                if self._on_cli_refresh:
+                    self._on_cli_refresh()
             elif key == 27:  # Escape — cancel
                 self._cli_auth_mode = None
                 self._cli_api_key_input = ""
@@ -881,6 +885,9 @@ class RelayTUI:
             if key in (curses.KEY_ENTER, 10, 13, 27):  # Enter or Escape
                 self._cli_auth_mode = None
                 self._cli_device_auth = None
+                # Refresh provider auth status (user may have completed sign-in)
+                if self._on_cli_refresh:
+                    self._on_cli_refresh()
             return
 
         # --- Main CLI selection ---
@@ -909,15 +916,12 @@ class RelayTUI:
             self._cli_api_key_input = ""
             self._cli_api_key_cursor = 0
         elif key == ord("s") or key == ord("S"):
-            # Start device auth for selected provider
+            # Start device auth for selected provider (runs async in background thread)
             name = (installed[self._cli_selected] if self._cli_selected < len(installed)
                     else all_names[self._cli_selected] if self._cli_selected < len(all_names)
                     else None)
             if name and self._on_cli_device_auth:
-                result = self._on_cli_device_auth(name)
-                if result:
-                    self._cli_device_auth = result
-                    self._cli_auth_mode = "device_auth"
+                self._on_cli_device_auth(name)
 
     def _draw_cli_prompt(self, stdscr, y, col, bar_w):
         """Draw the CLI provider selection screen with auth status."""
