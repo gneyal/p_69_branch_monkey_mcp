@@ -393,7 +393,8 @@ def cmd_llm(args):
         sys.exit(1)
 
     system_prompt = args.system_prompt or None
-    cli_cmd = provider.build_text_command(prompt, system_prompt=system_prompt)
+    use_mcp = getattr(args, 'mcp', False)
+    cli_cmd = provider.build_text_command(prompt, system_prompt=system_prompt, use_mcp=use_mcp)
 
     env = os.environ.copy()
     for key in cli_cmd.env_overrides:
@@ -607,6 +608,84 @@ def cmd_log(args):
         print(json.dumps({"logged": True, "method": "notification"}))
 
 
+def cmd_load_context(args):
+    """Load full machine context: agent prompt, memory, metrics, tasks. Prints enriched prompt."""
+    api_url, headers, req = _get_api_client()
+    machine_id = args.machine_id
+    parts = []
+
+    # 1. Machine info
+    resp = req.get(f"{api_url}/api/machines/{machine_id}", headers=headers, timeout=15)
+    if resp.status_code != 200:
+        print(f"Error fetching machine: {resp.status_code}", file=sys.stderr)
+        sys.exit(1)
+    machine = resp.json().get("machine", {})
+    parts.append(f"## Your Machine: {machine.get('name')} (ID: {machine_id})")
+    if machine.get("description"):
+        parts.append(machine["description"])
+    if machine.get("goal"):
+        parts.append(f"Goal: {machine['goal']}")
+    parts.append("")
+
+    # 2. Agent prompt
+    agent_id = machine.get("agent_id")
+    if agent_id:
+        resp = req.get(f"{api_url}/api/agent-definitions/{agent_id}", headers=headers, timeout=15)
+        if resp.status_code == 200:
+            prompt = resp.json().get("agent", {}).get("system_prompt", "")
+            if prompt:
+                parts.append("## Agent Instructions")
+                parts.append(prompt)
+                parts.append("")
+
+    # 3. Metrics
+    resp = req.get(f"{api_url}/api/machines/{machine_id}/metrics", headers=headers, timeout=15)
+    if resp.status_code == 200:
+        metrics = resp.json().get("metrics", [])
+        if metrics:
+            parts.append("## Current Metrics")
+            seen = set()
+            for m in metrics:
+                name = m.get("metric_name", "")
+                if name in seen:
+                    continue
+                seen.add(name)
+                target = f" / target: {m['target']}" if m.get("target") else ""
+                period = m.get("period", "weekly")
+                parts.append(f"- {name}: {m.get('value', 0)}{target} ({period})")
+            parts.append("")
+
+    # 4. Memory
+    project_id = machine.get("project_id", "")
+    memory_name = f"Machine Memory: {machine.get('name', '')}"
+    resp = req.get(f"{api_url}/api/contexts?search={memory_name}", headers=headers, timeout=15)
+    if resp.status_code == 200:
+        contexts = resp.json().get("contexts", [])
+        memory = next((c for c in contexts if c.get("context_type") == "memory" and memory_name.lower() in c.get("name", "").lower()), None)
+        if memory and memory.get("content"):
+            parts.append("## Memory (from previous runs)")
+            content = memory["content"]
+            if len(content) > 3000:
+                content = content[-3000:]
+            parts.append(content)
+            parts.append("")
+
+    # 5. Tasks
+    task_url = f"{api_url}/api/tasks?project_id={project_id}&machine_id={machine_id}" if project_id else f"{api_url}/api/tasks?machine_id={machine_id}"
+    resp = req.get(task_url, headers=headers, timeout=15)
+    if resp.status_code == 200:
+        tasks = resp.json().get("tasks", [])
+        if tasks:
+            active = [t for t in tasks if t.get("status") in ("todo", "in_progress", "in_review")]
+            if active:
+                parts.append("## Active Tasks")
+                for t in active[:20]:
+                    parts.append(f"- #{t.get('task_number', '?')} [{t.get('status')}] {t.get('title', '')}")
+                parts.append("")
+
+    print("\n".join(parts))
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog="kompany-workflow",
@@ -643,6 +722,7 @@ def main():
     llm_parser.add_argument("--cli", help="CLI provider: claude, codex, grok (default: from config)")
     llm_parser.add_argument("--cwd", help="Working directory")
     llm_parser.add_argument("--timeout", type=int, default=300, help="Timeout in seconds (default: 300)")
+    llm_parser.add_argument("--mcp", action="store_true", help="Load MCP tools (slower startup, enables tool use)")
     llm_parser.set_defaults(func=cmd_llm)
 
     # save-output
@@ -676,6 +756,11 @@ def main():
     log_parser.add_argument("--task-id", help="Task ID to log against")
     log_parser.add_argument("--title", help="Log title")
     log_parser.set_defaults(func=cmd_log)
+
+    # load-context
+    ctx_parser = subparsers.add_parser("load-context", help="Load full machine context (agent, memory, metrics, tasks)")
+    ctx_parser.add_argument("machine_id", help="Machine UUID")
+    ctx_parser.set_defaults(func=cmd_load_context)
 
     args = parser.parse_args()
     if not args.command:

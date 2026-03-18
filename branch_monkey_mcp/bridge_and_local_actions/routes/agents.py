@@ -238,9 +238,9 @@ def _build_default_yaml(machine_id: Optional[str], instructions: str, agent_name
     """Build a default workflow YAML for machines without one."""
     steps = []
     if machine_id:
-        steps.append(f"  - name: load-agent\n    description: Fetch agent instructions from Kompany\n    run: \"kompany-workflow agent-prompt {machine_id}\"")
+        steps.append(f'  - name: load-context\n    description: Load machine context (agent, memory, metrics, tasks)\n    run: "kompany-workflow load-context {machine_id}"')
         escaped = instructions.replace('"', '\\"')
-        steps.append(f'  - name: run\n    description: "{agent_name}"\n    run: \'kompany-workflow llm -s "$STEP_LOAD_AGENT_STDOUT" -p "{escaped}"\'\n    timeout: 300')
+        steps.append(f'  - name: run\n    description: "{agent_name}"\n    run: \'kompany-workflow llm -s "$STEP_LOAD_CONTEXT_STDOUT" -p "{escaped}"\'\n    timeout: 300')
     else:
         escaped = instructions.replace('"', '\\"')
         steps.append(f'  - name: run\n    description: "{agent_name}"\n    run: \'kompany-workflow llm -p "{escaped}"\'\n    timeout: 300')
@@ -309,22 +309,44 @@ async def run_workflow(request: RunWorkflowRequest):
                 "stderr": result.stderr[-2000:] if result.stderr else "",
             }
 
-        # Handle callback if provided
-        if request.callback:
-            callback_dict = request.callback.model_dump()
-            try:
-                import httpx
-                callback_url = callback_dict.get("url", "")
+        # Save run history to cloud API
+        callback_dict = request.callback.model_dump() if request.callback else {}
+        try:
+            import httpx
+            callback_url = callback_dict.get("url", "")
+            api_base = callback_url.rsplit("/api/", 1)[0] if callback_url else "https://kompany.dev"
+
+            run_payload = {
+                "machine_id": request.machine_id or None,
+                "project_id": callback_dict.get("project_id"),
+                "user_id": callback_dict.get("user_id"),
+                "status": workflow_result.get("status", "error"),
+                "duration_ms": workflow_result.get("duration_ms", 0),
+                "triggered_by": "cron" if request.callback else "manual",
+                "cron_id": callback_dict.get("cron_id"),
+                "error": workflow_result.get("error"),
+                "resume_from": workflow_result.get("resume_from"),
+                "steps": workflow_result.get("steps", []),
+            }
+
+            async with httpx.AsyncClient() as client:
+                # Save run history
+                await client.post(f"{api_base}/api/workflow-runs", json=run_payload, timeout=10)
+                print(f"[RunWorkflow] Saved run history")
+
+                # Handle cron callback
                 if callback_url:
-                    async with httpx.AsyncClient() as client:
-                        await client.post(callback_url, json={
-                            "cron_id": callback_dict.get("cron_id"),
-                            "status": "completed" if workflow_result.get("status") == "completed" else "failed",
-                            "result": workflow_result,
-                            "secret": callback_dict.get("secret"),
-                        }, timeout=10)
-            except Exception as e:
-                print(f"[RunWorkflow] Callback error: {e}")
+                    await client.post(callback_url, json={
+                        "cron_id": callback_dict.get("cron_id"),
+                        "cron_name": callback_dict.get("cron_name"),
+                        "agent_name": callback_dict.get("agent_name"),
+                        "project_id": callback_dict.get("project_id"),
+                        "user_id": callback_dict.get("user_id"),
+                        "status": "completed" if workflow_result.get("status") == "completed" else "failed",
+                        "output": workflow_result.get("steps", [{}])[-1].get("stdout", "")[:2000] if workflow_result.get("steps") else "",
+                    }, headers={"x-cron-secret": callback_dict.get("secret", "")}, timeout=10)
+        except Exception as e:
+            print(f"[RunWorkflow] Post-run error: {e}")
 
         # Clean up temp file
         if os.path.exists(workflow_file):

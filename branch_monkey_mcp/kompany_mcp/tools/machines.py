@@ -41,8 +41,8 @@ def _build_default_workflow(name, goal, machine_id=None):
     safe_name = name.lower().replace(' ', '-').replace('–', '-').replace('—', '-')
     steps = []
     if machine_id:
-        steps.append(f'  - name: load-agent\n    description: Fetch agent instructions from Kompany\n    run: "kompany-workflow agent-prompt {machine_id}"')
-    steps.append(f'  - name: run\n    description: "{goal or name}"\n    run: \'kompany-workflow llm -s "$STEP_LOAD_AGENT_STDOUT" -p "Execute your goal: {(goal or name).replace(chr(39), "")}"\'\n    timeout: 300')
+        steps.append(f'  - name: load-context\n    description: Load machine context (agent, memory, metrics, tasks)\n    run: "kompany-workflow load-context {machine_id}"')
+    steps.append(f'  - name: run\n    description: "{goal or name}"\n    run: \'kompany-workflow llm -s "$STEP_LOAD_CONTEXT_STDOUT" -p "Execute your goal: {(goal or name).replace(chr(39), "")}"\'\n    timeout: 300')
     return f'name: {safe_name}\ndescription: "{goal or name}"\n\nsteps:\n' + '\n\n'.join(steps) + '\n'
 
 

@@ -243,13 +243,22 @@ class ClaudeCodeProvider(CliProvider):
         """Return env vars to inject (stored API key)."""
         return self.get_auth_env()
 
-    def build_text_command(self, prompt, system_prompt=None):
+    def build_text_command(self, prompt, system_prompt=None, use_mcp=False):
         args = [
             "claude",
             "-p", prompt,
             "--output-format", "text",
-            "--dangerously-skip-permissions"
+            "--dangerously-skip-permissions",
         ]
+        if use_mcp:
+            for candidate in [
+                Path.cwd() / ".mcp.json",
+                Path.home() / ".mcp.json",
+                Path.home() / "Code" / "p_63_branch_monkey" / ".mcp.json",
+            ]:
+                if candidate.exists():
+                    args.extend(["--mcp-config", str(candidate)])
+                    break
         if system_prompt:
             args.extend(["--append-system-prompt", system_prompt])
 
