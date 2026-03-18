@@ -36,6 +36,16 @@ def kompany_machine_list() -> str:
         return f"Error fetching machines: {str(e)}"
 
 
+def _build_default_workflow(name, goal, machine_id=None):
+    """Build a default workflow YAML for a new machine."""
+    safe_name = name.lower().replace(' ', '-').replace('–', '-').replace('—', '-')
+    steps = []
+    if machine_id:
+        steps.append(f'  - name: load-agent\n    description: Fetch agent instructions from Kompany\n    run: "kompany-workflow agent-prompt {machine_id}"')
+    steps.append(f'  - name: run\n    description: "{goal or name}"\n    run: \'kompany-workflow llm -s "$STEP_LOAD_AGENT_STDOUT" -p "Execute your goal: {(goal or name).replace(chr(39), "")}"\'\n    timeout: 300')
+    return f'name: {safe_name}\ndescription: "{goal or name}"\n\nsteps:\n' + '\n\n'.join(steps) + '\n'
+
+
 @mcp.tool()
 def kompany_machine_create(
     name: str,
@@ -47,9 +57,13 @@ def kompany_machine_create(
     metric_unit: str = "",
     leading_metric_name: str = "",
     machine_type: str = "processor",
-    domain_id: str = None
+    domain_id: str = None,
+    workflow_yaml: str = None
 ) -> str:
     """Create a new machine (automated business process) in the current project.
+
+    A default workflow is auto-generated if none provided. The workflow defines
+    what this machine does when triggered by a cron.
 
     Args:
         name: Display name for the machine
@@ -62,6 +76,7 @@ def kompany_machine_create(
         leading_metric_name: Input/leading metric name (e.g. "calls made", "emails sent")
         machine_type: generator, processor, funnel, monitor, router, aggregator, syncer, or nurture (default: processor)
         domain_id: UUID of the domain to place this machine in (optional). Use kompany_domain_list to find domain IDs.
+        workflow_yaml: Workflow YAML definition (optional). Auto-generated if not provided.
 
     Requires a project to be focused first using kompany_project_focus.
     """
@@ -86,6 +101,13 @@ def kompany_machine_create(
         result = api_post("/api/machines", payload)
         machine = result.get("machine", result)
         machine_id = machine.get("id")
+
+        # Set workflow — provided or auto-generated
+        wf = workflow_yaml or _build_default_workflow(name, goal, machine_id)
+        try:
+            api_put(f"/api/machines/{machine_id}", {"command": wf})
+        except Exception:
+            pass
 
         # Seed metrics if provided
         metrics_seeded = []

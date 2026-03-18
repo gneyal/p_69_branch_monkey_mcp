@@ -99,6 +99,15 @@ class CliProvider:
         """Start device auth flow. Returns {url, code} or None if not supported."""
         return None
 
+    def build_text_command(
+        self,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+    ) -> CliCommand:
+        """Build command for one-shot text output (no streaming JSON).
+        Used by kompany-workflow llm for clean text responses."""
+        raise NotImplementedError
+
     def build_run_command(
         self,
         prompt: str,
@@ -233,6 +242,22 @@ class ClaudeCodeProvider(CliProvider):
     def _build_env_inject(self) -> Dict[str, str]:
         """Return env vars to inject (stored API key)."""
         return self.get_auth_env()
+
+    def build_text_command(self, prompt, system_prompt=None):
+        args = [
+            "claude",
+            "-p", prompt,
+            "--output-format", "text",
+            "--dangerously-skip-permissions"
+        ]
+        if system_prompt:
+            args.extend(["--append-system-prompt", system_prompt])
+
+        return CliCommand(
+            args=args,
+            env_overrides=self._build_env_overrides(),
+            env_inject=self._build_env_inject(),
+        )
 
     def build_run_command(self, prompt, system_prompt=None):
         args = [
@@ -395,29 +420,46 @@ class CodexProvider(CliProvider):
         except Exception:
             return None
 
-    def build_run_command(self, prompt, system_prompt=None):
-        args = [
-            "codex",
-            "exec", prompt,
-            "--full-auto",
-            "--json",
-        ]
-        if system_prompt:
-            args.extend(["--system-prompt", system_prompt])
+    def _write_prompt_file(self, prompt, system_prompt=None):
+        """Codex has no --system-prompt flag. Write merged prompt to a temp file."""
+        import tempfile
+        full = f"{system_prompt}\n\n---\n\n{prompt}" if system_prompt else prompt
+        f = tempfile.NamedTemporaryFile(mode='w', suffix='.md', prefix='codex-prompt-', delete=False)
+        f.write(full)
+        f.close()
+        return f.name
 
+    def build_text_command(self, prompt, system_prompt=None):
+        prompt_file = self._write_prompt_file(prompt, system_prompt)
+        import tempfile
+        out_file = tempfile.mktemp(suffix='.txt', prefix='codex-out-')
         return CliCommand(
-            args=args,
+            args=[
+                "bash", "-c",
+                f"cat '{prompt_file}' | codex exec - --dangerously-bypass-approvals-and-sandbox -o '{out_file}' > /dev/null 2>&1; cat '{out_file}'; rm -f '{prompt_file}' '{out_file}'"
+            ],
+            env_overrides={},
+            env_inject=self.get_auth_env(),
+        )
+
+    def build_run_command(self, prompt, system_prompt=None):
+        prompt_file = self._write_prompt_file(prompt, system_prompt)
+        return CliCommand(
+            args=[
+                "bash", "-c",
+                f"cat '{prompt_file}' | codex exec - --dangerously-bypass-approvals-and-sandbox --json; rm -f '{prompt_file}'"
+            ],
             env_overrides={},
             env_inject=self.get_auth_env(),
         )
 
     def build_resume_command(self, prompt, session_id):
-        # Codex syntax: codex exec resume <session_id> <prompt> --full-auto --json
+        # Codex syntax: codex exec resume <session_id> <prompt> --dangerously-bypass-approvals-and-sandbox --json
         return CliCommand(
             args=[
                 "codex",
                 "exec", "resume", session_id, prompt,
-                "--full-auto",
+                "--dangerously-bypass-approvals-and-sandbox",
                 "--json",
             ],
             env_overrides={},
@@ -429,7 +471,7 @@ class CodexProvider(CliProvider):
             args=[
                 "codex",
                 "exec", prompt,
-                "--full-auto",
+                "--dangerously-bypass-approvals-and-sandbox",
                 "--json",
             ],
             env_overrides={},
@@ -609,17 +651,28 @@ class GrokProvider(CliProvider):
         # grok-cli doesn't support passing prompts directly — it spawns
         # interactive claude. For our use case we run claude directly with
         # the proxy env vars that grok would set.
+        return self._grok_cli_command(prompt, "stream-json", auth_env, api_key)
+
+    def build_text_command(self, prompt, system_prompt=None):
+        auth_env = self.get_auth_env()
+        api_key = auth_env.get(self.api_key_env)
+        return self._grok_cli_command(prompt, "text", auth_env, api_key, system_prompt)
+
+    def _grok_cli_command(self, prompt, output_format, auth_env, api_key, system_prompt=None):
+        args = [
+            "claude",
+            "-p", prompt,
+            "--output-format", output_format,
+            "--dangerously-skip-permissions"
+        ]
+        if output_format == "stream-json":
+            args.append("--verbose")
+        if system_prompt:
+            args.extend(["--append-system-prompt", system_prompt])
         return CliCommand(
-            args=[
-                "claude",
-                "-p", prompt,
-                "--output-format", "stream-json",
-                "--verbose",
-                "--dangerously-skip-permissions"
-            ],
+            args=args,
             env_overrides={"CLAUDECODE": None},
             env_inject={
-                # Point Claude at the xAI API via anthropic-compatible endpoint
                 "ANTHROPIC_BASE_URL": "https://api.x.ai",
                 **(auth_env if auth_env else {}),
                 **({"ANTHROPIC_API_KEY": api_key} if api_key else {}),

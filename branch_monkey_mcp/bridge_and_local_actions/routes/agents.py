@@ -220,6 +220,131 @@ async def run_agent(request: RunAgentRequest):
     }
 
 
+class RunWorkflowRequest(BaseModel):
+    """Request to run a workflow."""
+    workflow_yaml: Optional[str] = None  # the workflow YAML content (from machine.command)
+    working_dir: Optional[str] = None
+    from_step: Optional[str] = None  # resume from this step
+    step: Optional[str] = None  # run only this step
+    callback: Optional[CronCallback] = None
+    # For machines without a workflow — auto-generate a default
+    machine_id: Optional[str] = None
+    system_prompt: Optional[str] = None
+    instructions: Optional[str] = None
+    agent_name: Optional[str] = None
+
+
+def _build_default_yaml(machine_id: Optional[str], instructions: str, agent_name: str) -> str:
+    """Build a default workflow YAML for machines without one."""
+    steps = []
+    if machine_id:
+        steps.append(f"  - name: load-agent\n    description: Fetch agent instructions from Kompany\n    run: \"kompany-workflow agent-prompt {machine_id}\"")
+        escaped = instructions.replace('"', '\\"')
+        steps.append(f'  - name: run\n    description: "{agent_name}"\n    run: \'kompany-workflow llm -s "$STEP_LOAD_AGENT_STDOUT" -p "{escaped}"\'\n    timeout: 300')
+    else:
+        escaped = instructions.replace('"', '\\"')
+        steps.append(f'  - name: run\n    description: "{agent_name}"\n    run: \'kompany-workflow llm -p "{escaped}"\'\n    timeout: 300')
+
+    return f"name: {agent_name}\ndescription: Auto-generated workflow\n\nsteps:\n" + "\n\n".join(steps) + "\n"
+
+
+@router.post("/run-workflow")
+async def run_workflow(request: RunWorkflowRequest):
+    """Run a workflow. The YAML comes from the request body (stored in machine.command).
+    If no YAML provided, auto-generates a default LLM workflow.
+    """
+    import subprocess as sp
+    import tempfile
+
+    working_dir = request.working_dir or get_default_working_dir()
+
+    if working_dir and not os.path.isdir(working_dir):
+        raise HTTPException(status_code=400, detail=f"Working directory does not exist: {working_dir}")
+
+    # Get the workflow YAML
+    yaml_content = request.workflow_yaml
+    if not yaml_content:
+        yaml_content = _build_default_yaml(
+            request.machine_id,
+            request.instructions or "Run your default behavior.",
+            request.agent_name or "default",
+        )
+        print(f"[RunWorkflow] Auto-generated default workflow")
+
+    # Write YAML to temp file
+    tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.yml', prefix='wf-', delete=False)
+    tmp.write(yaml_content)
+    tmp.close()
+    workflow_file = tmp.name
+
+    # Build command
+    cmd = ["kompany-workflow", "run", "-f", workflow_file]
+    if request.from_step:
+        cmd.extend(["--from", request.from_step])
+    if request.step:
+        cmd.extend(["--step", request.step])
+
+    print(f"[RunWorkflow] Running: {' '.join(cmd)}")
+    print(f"[RunWorkflow] Working dir: {working_dir}")
+
+    try:
+        result = sp.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=600,  # 10 min max
+            cwd=working_dir,
+        )
+
+        print(f"[RunWorkflow] Exit code: {result.returncode}")
+
+        # Parse JSON output
+        try:
+            workflow_result = json.loads(result.stdout)
+        except json.JSONDecodeError:
+            workflow_result = {
+                "status": "error",
+                "error": "Failed to parse workflow output",
+                "stdout": result.stdout[-2000:] if result.stdout else "",
+                "stderr": result.stderr[-2000:] if result.stderr else "",
+            }
+
+        # Handle callback if provided
+        if request.callback:
+            callback_dict = request.callback.model_dump()
+            try:
+                import httpx
+                callback_url = callback_dict.get("url", "")
+                if callback_url:
+                    async with httpx.AsyncClient() as client:
+                        await client.post(callback_url, json={
+                            "cron_id": callback_dict.get("cron_id"),
+                            "status": "completed" if workflow_result.get("status") == "completed" else "failed",
+                            "result": workflow_result,
+                            "secret": callback_dict.get("secret"),
+                        }, timeout=10)
+            except Exception as e:
+                print(f"[RunWorkflow] Callback error: {e}")
+
+        # Clean up temp file
+        if os.path.exists(workflow_file):
+            os.unlink(workflow_file)
+
+        return {
+            "success": result.returncode == 0,
+            "workflow": workflow_result,
+        }
+
+    except sp.TimeoutExpired:
+        if os.path.exists(workflow_file):
+            os.unlink(workflow_file)
+        return {"success": False, "workflow": {"status": "error", "error": "Workflow timed out after 600s"}}
+    except Exception as e:
+        if os.path.exists(workflow_file):
+            os.unlink(workflow_file)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/agents")
 def list_agents():
     """List all local agents."""

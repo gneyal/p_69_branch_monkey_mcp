@@ -30,12 +30,14 @@ dependencies = [
     "fastapi>=0.100.0",
     "uvicorn>=0.22.0",
     "pyngrok>=7.0.0",
+    "pyyaml>=6.0",
 ]
 
 [project.scripts]
 branch-monkey-mcp = "branch_monkey_mcp.kompany_mcp:main"
 branch-monkey-relay = "branch_monkey_mcp.relay_client:main"
 branch-monkey-proxy = "branch_monkey_mcp.dev_proxy:main"
+kompany-workflow = "branch_monkey_mcp.workflow:main"
 
 [project.urls]
 Homepage = "https://github.com/gneyal/branch-monkey-mcp"
